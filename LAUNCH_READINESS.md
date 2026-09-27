@@ -1,3 +1,5 @@
+> **Historical engineering log.** This file records the audits and fixes made across earlier development sprints, in the order they happened. Some statements describe intermediate states that later sprints changed. For the current release status and remaining work, see [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and the [README](README.md).
+
 # Cellar — Launch Readiness Report
 
 Generated from a direct, ongoing audit of this codebase across multiple

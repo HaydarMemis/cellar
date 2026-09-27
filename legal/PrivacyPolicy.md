@@ -1,3 +1,5 @@
+> **Superseded draft.** The current Privacy Policy is maintained in code at `src/content/legal/privacyPolicy.ts` (English and Turkish) and exported for hosting with `npm run legal:export` to `legal/generated/`. This file is kept for history only.
+
 # Cellar — Privacy Policy (DRAFT)
 
 > **This is not legal advice and is not a finished legal document.** It is a

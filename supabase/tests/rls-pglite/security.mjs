@@ -64,3 +64,4 @@ r=await as(db,'authenticated',D,`insert into public.subscribers (user_id,is_prem
 check('premium self-grant still rejected after hardening', !r.ok, r);
 
 console.log(`\n${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);

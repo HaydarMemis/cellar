@@ -12,11 +12,6 @@ expo-env.d.ts
 # Native
 .kotlin/
 *.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
 
 # Metro
 .metro-health-check*
@@ -28,10 +23,28 @@ yarn-error.*
 
 # macOS
 .DS_Store
-*.pem
 
-# local env files
-.env*.local
+# local env files — never commit real configuration or credentials
+.env
+.env.*
+!.env.example
+
+# signing material, store credentials and service-account keys
+*.p8
+*.p12
+*.pem
+*.key
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json
+google-services.json
+GoogleService-Info.plist
+*service-account*.json
+
+# Supabase CLI local state (project link, pooler URL, versions)
+supabase/.temp/
+supabase/.branches/
 
 # typescript
 *.tsbuildinfo
@@ -39,3 +52,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# generated legal exports are committed (hosting source); nothing else in
+# legal/ is generated. Local Supabase test harness deps:
+supabase/tests/rls-pglite/node_modules/

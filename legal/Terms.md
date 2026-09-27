@@ -1,3 +1,5 @@
+> **Superseded draft.** The current Terms of Service are maintained in code at `src/content/legal/termsOfService.ts` (English and Turkish) and exported for hosting with `npm run legal:export` to `legal/generated/`. This file is kept for history only.
+
 # Cellar — Terms of Service (DRAFT)
 
 > **This is not legal advice and is not a finished legal document.** It is

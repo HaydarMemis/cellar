@@ -39,7 +39,7 @@ Create these for the **production** and **preview** environments (`eas.json` alr
 
 | Variable | Value |
 |---|---|
-| `EXPO_PUBLIC_SUPABASE_URL` | `https://ajtjwnilihbrcnsctchb.supabase.co` |
+| `EXPO_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | the anon (public) key |
 | `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `…_ANDROID_API_KEY` | RevenueCat public app keys |
 | `EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED` | `true` (after the Supabase Apple provider is on) |
@@ -51,7 +51,7 @@ In `eas.json` → `submit.production`, replace `REPLACE_WITH_*` (Apple ID email,
 
 Bundle id / package is `com.ecclesia.coctail`. Decide it is final **before** the first store upload; it can never change afterwards.
 
-### Supabase dashboard (project `ajtjwnilihbrcnsctchb`)
+### Supabase dashboard (project `<project-ref>`)
 1. **Auth → URL Configuration → Redirect URLs:** `cellar://`, `cellar://reset-password`, `cellar://auth-callback`. Site URL: `cellar://`.
 2. **Auth → Email → SMTP:** configure a real provider (Resend, Postmark, SES, Mailgun…). The built-in sender only delivers to project team members and is rate-limited, so real users would get **no** confirmation or reset emails. Then raise the email rate limit (Auth → Rate Limits).
 3. **Auth → Email templates:** translate the confirmation and recovery templates if you want Turkish emails. Keep `{{ .ConfirmationURL }}`.
@@ -106,7 +106,7 @@ Configure the OAuth consent screen: app name, support email, privacy policy URL.
 2. Entitlement with identifier exactly **`premium`**, attached to all three products.
 3. Offering marked *current*, using the package types **Monthly**, **Annual** and **Lifetime**.
 4. Integrations → Webhook:
-   - URL `https://ajtjwnilihbrcnsctchb.supabase.co/functions/v1/revenuecat-webhook`.
+   - URL `https://<project-ref>.supabase.co/functions/v1/revenuecat-webhook`.
    - Authorization header = the same value as `REVENUECAT_WEBHOOK_AUTH_HEADER`.
 5. Copy the public iOS and Android API keys into EAS.
 
