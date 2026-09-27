@@ -1,5 +1,6 @@
 import { File } from 'expo-file-system';
 import { reportError } from '../../lib/crashReporting';
+import { resolveLocalPhotoUri } from '../localMedia';
 import { supabase } from './client';
 
 export type RecipeMediaKind = 'photo' | 'video';
@@ -19,11 +20,32 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export class MediaUploadError extends Error {
   code: 'too-large' | 'unsupported-type' | 'read-failed' | 'upload-failed';
-  constructor(message: string, code: MediaUploadError['code']) {
+  /** HTTP status of a failed storage upload, when known — lets classifySyncError tell a rejected upload (4xx) from a transient one. */
+  status?: number;
+  constructor(message: string, code: MediaUploadError['code'], status?: number) {
     super(message);
     this.name = 'MediaUploadError';
     this.code = code;
+    if (status !== undefined) this.status = status;
   }
+}
+
+function storageStatus(error: unknown): number | undefined {
+  const e = (error ?? {}) as { status?: unknown; statusCode?: unknown };
+  if (typeof e.status === 'number' && e.status > 0) return e.status;
+  if (typeof e.statusCode === 'string' && /^\d{3}$/.test(e.statusCode)) return Number(e.statusCode);
+  return undefined;
+}
+
+/** The object path an upload of this kind goes to. Always the CURRENT owner's folder — storage RLS only lets a user write under their own uid. */
+export function recipeMediaPath(ownerId: string, recipeId: string, kind: RecipeMediaKind): string {
+  return `${ownerId}/${recipeId}/${kind}`;
+}
+
+/** True when `url` is the public URL of exactly this owner's/recipe's media object (ignoring the ?v= cache-buster). */
+export function isRecipeMediaUrlFor(url: string, ownerId: string, recipeId: string, kind: RecipeMediaKind): boolean {
+  const path = url.split('?')[0].split('#')[0];
+  return path.endsWith(`/recipe-media/${recipeMediaPath(ownerId, recipeId, kind)}`);
 }
 
 function client() {
@@ -67,7 +89,9 @@ export async function uploadRecipeMedia(
   kind: RecipeMediaKind,
   hintedMimeType?: string | null,
 ): Promise<string> {
-  const file = new File(localUri);
+  // A stored recipe photo is a container-relative reference (or a legacy
+  // absolute URI from an older container) — resolve it to today's path.
+  const file = new File(resolveLocalPhotoUri(localUri));
   if (!file.exists) throw new MediaUploadError('Local media file no longer exists.', 'read-failed');
   if (file.size > MAX_UPLOAD_BYTES) throw new MediaUploadError('File is too large to upload (25MB max).', 'too-large');
 
@@ -87,7 +111,7 @@ export async function uploadRecipeMedia(
   // Fixed filename per kind (no extension) so re-uploading a replacement
   // — even in a different format than the original — genuinely upserts
   // the same object instead of leaving the old one orphaned alongside it.
-  const path = `${ownerId}/${recipeId}/${kind}`;
+  const path = recipeMediaPath(ownerId, recipeId, kind);
 
   const { error } = await client().storage.from('recipe-media').upload(path, bytes, { contentType, upsert: true });
   if (error) {
@@ -96,7 +120,7 @@ export async function uploadRecipeMedia(
     // logging for diagnosis: it could be a real backend/network/RLS
     // misconfiguration issue rather than anything the user did wrong.
     reportError(error, { module: 'mediaUpload', action: 'uploadRecipeMedia', ownerId, recipeId, kind });
-    throw new MediaUploadError(error.message, 'upload-failed');
+    throw new MediaUploadError(error.message, 'upload-failed', storageStatus(error));
   }
 
   const { data } = client().storage.from('recipe-media').getPublicUrl(path);

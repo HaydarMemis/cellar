@@ -17,7 +17,7 @@ Creating an account or publishing a recipe sends the following to our infrastruc
 - Published (public) recipes: name, description, ingredients, method, steps and any photo you attach — visible to everyone using the app.
 - Social activity: who you follow, who follows you, the recipes you like, and the users you block (your block list is visible only to you).
 - Reports: if you report a recipe or user, we store the report and your account ID.
-- Purchases: if you buy Premium, our billing provider RevenueCat (on top of the Apple App Store / Google Play) records your subscription status together with your account ID. We never receive your payment card details.
+- Purchases: if you buy Premium, our billing provider RevenueCat (on top of the Apple App Store / Google Play) records your subscription status together with your account ID. A copy of your Premium status (whether it is active, the plan and when it last changed) is also kept in our Supabase database. We never receive your payment card details.
 
 ## Photos
 
@@ -25,13 +25,15 @@ When you add a photo to a recipe, the system photo picker is used — the app on
 
 ## Crash reports
 
-If the app crashes or hits an error, and this feature is enabled, error details (the error message, app version, device model, operating system and, if signed in, your anonymous account ID) are sent to our error-monitoring service, Sentry. Recipe content, email addresses, passwords and session tokens are not sent.
+If the app crashes or hits an error, and this feature is enabled, error details (the error message, app version, device model, operating system and, if signed in, your pseudonymous account ID — a random identifier that does not contain your name or email) are sent to our error-monitoring service, Sentry. Recipe content, email addresses, passwords and session tokens are not sent.
 
 ## Services that process your data
 
 These services process data on our behalf. Some may process it outside the EU (for example in the United States).
 
-- Supabase — database, authentication, file storage and the account-deletion function (hosted in the EU, Frankfurt region).
+Like any internet service, they also receive your device’s IP address when the app connects to them.
+
+- Supabase — database, authentication, file storage and the account-deletion function (hosting region: [hosting region not yet configured]).
 - RevenueCat — purchase and subscription status.
 - Apple / Google — only if you choose “Continue with Apple” or “Continue with Google”; what they see about that sign-in is governed by their own privacy policies.
 - Sentry — crash reports (if enabled).
@@ -42,7 +44,7 @@ Cellar shows no ads, uses no third-party analytics or tracking tools, and does n
 
 ## Retention and account deletion
 
-Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile, published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.
+Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile, published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. We also ask RevenueCat to delete the purchase-status record linked to your account; the store’s own purchase history stays with Apple / Google. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.
 
 ## Age
 

@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { Alert, FlatList, RefreshControlProps, StyleSheet, useWindowDimensions } from 'react-native';
 import { DuplicateReportError } from '../../data/community';
+import { ReportRateLimitedError, ReportTargetUnavailableError } from '../../data/supabase/SupabaseModerationBackend';
 import { isSupabaseConfigured } from '../../data/supabase/client';
 import { PersonalRecipe, UserProfile } from '../../domain/types';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -72,6 +73,10 @@ export function RecipeFeedRow({ recipes, creatorsById, layout = 'row', onEndReac
     } catch (e) {
       if (e instanceof DuplicateReportError) {
         Alert.alert(t('moderation.reportAlreadyOpenTitle'), t('moderation.reportAlreadyOpenMessage'));
+      } else if (e instanceof ReportTargetUnavailableError) {
+        Alert.alert(t('moderation.reportTargetUnavailableTitle'), t('moderation.reportTargetUnavailableMessage'));
+      } else if (e instanceof ReportRateLimitedError) {
+        Alert.alert(t('moderation.reportRateLimitedTitle'), t('moderation.reportRateLimitedMessage'));
       } else {
         Alert.alert(t('moderation.reportFailedTitle'), t('moderation.reportFailedMessage'));
       }

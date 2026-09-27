@@ -44,7 +44,31 @@ export type SignUpOutcome = AuthResult | { ok: 'pending-confirmation'; email: st
 
 export type PasswordResetOutcome =
   | { ok: true }
-  | { ok: false; error: 'not-supported-offline' | 'rate-limited' | 'network-error' | 'weak-password' | 'unknown' };
+  | {
+      ok: false;
+      /**
+       * - reauthentication-needed: the project has "Secure password change"
+       *   on and this session is too old to change the password without
+       *   re-authenticating (Supabase `reauthentication_needed` /
+       *   `reauthentication_not_valid`). A fresh sign-in satisfies it.
+       * - same-password: the new password equals the current one.
+       */
+      error: 'not-supported-offline' | 'rate-limited' | 'network-error' | 'weak-password' | 'reauthentication-needed' | 'same-password' | 'unknown';
+    };
+
+/**
+ * Thrown by ensureProfileForCurrentSession when the backend AUTHORITATIVELY
+ * rejects the restored session — the user no longer exists (account deleted
+ * on another device), the JWT is invalid, or the server-side session is gone.
+ * Distinct from a network failure: only a network failure may fall back to
+ * the cached profile; this must sign the device out.
+ */
+export class SessionInvalidError extends Error {
+  constructor(message = 'The stored session is no longer valid') {
+    super(message);
+    this.name = 'SessionInvalidError';
+  }
+}
 
 export type ProfilePatch = Partial<Pick<UserProfile, 'displayName' | 'bio' | 'avatarColorSeed'>>;
 
@@ -66,10 +90,27 @@ export interface AuthBackend {
    */
   onSessionEnded?(listener: () => void): () => void;
   /**
+   * Notifies when the backend reports a live session for `userId` on its own
+   * (sign-in from a deep link, a token refresh that finally succeeded after
+   * an offline start, a user update). useAuthStore uses it to reconcile the
+   * app identity when it doesn't match the session. Optional — the local
+   * backend's session only changes through its own calls.
+   */
+  onSessionActive?(listener: (userId: string) => void): () => void;
+  /**
+   * Drops THIS device's session only (no server call needed to succeed, other
+   * devices untouched). Used when the session turned out to be invalid, and
+   * to never leave a live session behind when sign-in could not complete.
+   * Optional — falls back to logOut().
+   */
+  signOutLocally?(): Promise<void>;
+  /**
    * For a session that exists but has no profile row yet (first sign-in
    * after email confirmation arriving via the confirmation link rather than
    * the sign-in form): create it from the data chosen at sign-up.
    * Optional — the local backend always creates both together.
+   * Throws SessionInvalidError when the backend rejects the session itself
+   * (user gone / invalid JWT); resolves undefined for a network failure.
    */
   ensureProfileForCurrentSession?(): Promise<UserProfile | undefined>;
   /** The CURRENTLY signed-in account's own email — never another user's; email is otherwise never exposed (see AccountRecord/`profiles` table). Used only by the Account & Security screen to show a user their own sign-in address. Resolves null when signed out. */

@@ -4,6 +4,34 @@ import { supabase } from './client';
 
 /** Postgres unique_violation — thrown when the exact same block already exists (blocks' unique(blocker_id, blocked_id)) or when the same reporter already has an open report against the same target (reports' partial unique index) — see supabase/migrations/. */
 const UNIQUE_VIOLATION = '23505';
+/** Raised by the reports BEFORE INSERT trigger (supabase/migrations/20260927120000_audit_hardening.sql) when the reported recipe/user does not exist (e.g. the recipe was unpublished or the account deleted since it was shown) or is the reporter themselves. Same SQLSTATE as a plain FK violation, so the trigger's hint is what identifies it. */
+const FOREIGN_KEY_VIOLATION = '23503';
+const REPORT_TARGET_NOT_FOUND_HINT = 'report_target_not_found';
+/** Raised by the same trigger when the reporter has filed 20+ reports in the last hour. */
+const PROGRAM_LIMIT_EXCEEDED = '54000';
+
+/** The reported recipe/user no longer exists (or is the reporter). Expected, user-facing — not crash-reported. */
+export class ReportTargetUnavailableError extends Error {
+  constructor() {
+    super('The reported content no longer exists.');
+    this.name = 'ReportTargetUnavailableError';
+  }
+}
+
+/** The reporter hit the server-side report rate limit (20 per hour). Expected, user-facing — not crash-reported; retrying immediately will fail again. */
+export class ReportRateLimitedError extends Error {
+  constructor() {
+    super('Too many reports submitted recently. Please try again later.');
+    this.name = 'ReportRateLimitedError';
+  }
+}
+
+function isReportTargetNotFound(error: { code?: string; hint?: string | null; message?: string }): boolean {
+  return (
+    error.code === FOREIGN_KEY_VIOLATION &&
+    (error.hint === REPORT_TARGET_NOT_FOUND_HINT || (error.message ?? '').includes('report target not found'))
+  );
+}
 
 function client() {
   if (!supabase) throw new Error('SupabaseModerationBackend used without a configured Supabase client');
@@ -17,6 +45,8 @@ export const supabaseModerationBackend: ModerationBackend = {
       .from('reports')
       .insert({ reporter_id: reporterId, target_type: targetType, target_id: targetId, reason, details: details?.trim() || null });
     if (error?.code === UNIQUE_VIOLATION) throw new DuplicateReportError();
+    if (error && isReportTargetNotFound(error)) throw new ReportTargetUnavailableError();
+    if (error?.code === PROGRAM_LIMIT_EXCEEDED) throw new ReportRateLimitedError();
     if (error) {
       reportError(error, { module: 'SupabaseModerationBackend', action: 'reportContent', targetType, targetId });
       throw error;

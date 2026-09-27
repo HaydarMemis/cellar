@@ -11,7 +11,7 @@ import { LegalDoc } from './types';
  * (KVKK for Türkiye; GDPR for EU users, if targeted). Keep EN and TR in sync.
  */
 export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
-  const { entity, address, jurisdiction, supportEmail } = legalFields(locale);
+  const { entity, address, jurisdiction, supportEmail, dataRegion } = legalFields(locale);
   if (locale === 'tr') {
     return {
       sections: [
@@ -36,7 +36,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
             'Yayınlanan (herkese açık) tarifler: ad, açıklama, malzemeler, yöntem, adımlar ve eklediğin fotoğraf — uygulamayı kullanan herkes görebilir.',
             'Sosyal etkileşimler: takip ettiklerin, seni takip edenler, beğendiğin tarifler ve engellediğin kullanıcılar (engelleme listen yalnızca sana görünür).',
             'Şikâyetler: bir tarifi veya kullanıcıyı şikâyet ettiğinde şikâyet içeriği ve hesap kimliğin saklanır.',
-            'Satın almalar: Premium alırsan ödeme sağlayıcımız RevenueCat (Apple App Store / Google Play üzerinde) abonelik durumunu hesap kimliğinle birlikte kaydeder. Kart bilgilerini hiçbir zaman almayız.',
+            'Satın almalar: Premium alırsan ödeme sağlayıcımız RevenueCat (Apple App Store / Google Play üzerinde) abonelik durumunu hesap kimliğinle birlikte kaydeder. Premium durumunun bir kopyası (etkin olup olmadığı, plan ve son güncelleme zamanı) da Supabase veritabanımızda tutulur. Kart bilgilerini hiçbir zaman almayız.',
           ],
         },
         {
@@ -48,18 +48,18 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
         {
           heading: 'Hata raporları',
           paragraphs: [
-            'Uygulama çökerse veya bir hata oluşursa, bu özellik etkinse hata ayrıntıları (hata mesajı, uygulama sürümü, cihaz modeli, işletim sistemi ve varsa anonim hesap kimliğin) hata izleme hizmetimiz Sentry’ye gönderilir. Tarif içeriği, e-posta adresi, şifre veya oturum anahtarları gönderilmez.',
+            'Uygulama çökerse veya bir hata oluşursa, bu özellik etkinse hata ayrıntıları (hata mesajı, uygulama sürümü, cihaz modeli, işletim sistemi ve varsa takma adlı hesap kimliğin — adını veya e-postanı içermeyen rastgele bir kimlik) hata izleme hizmetimiz Sentry’ye gönderilir. Tarif içeriği, e-posta adresi, şifre veya oturum anahtarları gönderilmez.',
           ],
         },
         {
           heading: 'Verilerini işleyen hizmetler',
           bullets: [
-            'Supabase — veritabanı, kimlik doğrulama, dosya depolama ve hesap silme işlevi (veriler AB’de, Frankfurt bölgesinde barındırılır).',
+            `Supabase — veritabanı, kimlik doğrulama, dosya depolama ve hesap silme işlevi (barındırma bölgesi: ${dataRegion}).`,
             'RevenueCat — satın alma ve abonelik durumu.',
             'Apple / Google — yalnızca “Apple ile devam et” veya “Google ile devam et”i seçersen; bu girişle ilgili gördükleri kendi gizlilik politikalarına tabidir.',
             'Sentry — hata raporları (etkinse).',
           ],
-          paragraphs: ['Bu hizmetler verilerini bizim adımıza işler. Bazıları verileri AB dışında (örneğin ABD’de) işleyebilir.'],
+          paragraphs: ['Bu hizmetler verilerini bizim adımıza işler. Bazıları verileri AB dışında (örneğin ABD’de) işleyebilir.', 'Uygulama bu hizmetlere bağlandığında, her internet hizmetinde olduğu gibi cihazının IP adresini de alırlar.'],
         },
         {
           heading: 'Reklam ve izleme yok',
@@ -70,7 +70,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
         {
           heading: 'Saklama süresi ve hesap silme',
           paragraphs: [
-            'Hesap verilerin hesabını silene kadar saklanır. Hesabını istediğin zaman uygulama içinden Profil → Hesabı sil ile kalıcı olarak silebilirsin. Bu işlem kimlik bilgilerini, profilini, yayınladığın tarifleri ve fotoğraflarını, beğenilerini, takiplerini ve engellemelerini sunucularımızdan siler; Apple ile giriş kullandıysan Cellar’ın Apple kimliğine erişimini de iptal eder. Moderasyon kaydı olarak tutulan şikâyetler, seninle ilişkilendirilmeden saklanmaya devam eder. Silinen veriler sağlayıcılarımızın yedeklerinde sınırlı bir süre daha bulunabilir. Yalnızca cihazında tutulan veriler, uygulamayı silene kadar cihazında kalır.',
+            'Hesap verilerin hesabını silene kadar saklanır. Hesabını istediğin zaman uygulama içinden Profil → Hesabı sil ile kalıcı olarak silebilirsin. Bu işlem kimlik bilgilerini, profilini, yayınladığın tarifleri ve fotoğraflarını, beğenilerini, takiplerini ve engellemelerini sunucularımızdan siler; Apple ile giriş kullandıysan Cellar’ın Apple kimliğine erişimini de iptal eder. RevenueCat’ten de hesabına bağlı satın alma durumu kaydını silmesini isteriz; mağazadaki satın alma geçmişin Apple / Google’da kalır. Moderasyon kaydı olarak tutulan şikâyetler, seninle ilişkilendirilmeden saklanmaya devam eder. Silinen veriler sağlayıcılarımızın yedeklerinde sınırlı bir süre daha bulunabilir. Yalnızca cihazında tutulan veriler, uygulamayı silene kadar cihazında kalır.',
           ],
         },
         {
@@ -118,7 +118,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
           'Published (public) recipes: name, description, ingredients, method, steps and any photo you attach — visible to everyone using the app.',
           'Social activity: who you follow, who follows you, the recipes you like, and the users you block (your block list is visible only to you).',
           'Reports: if you report a recipe or user, we store the report and your account ID.',
-          'Purchases: if you buy Premium, our billing provider RevenueCat (on top of the Apple App Store / Google Play) records your subscription status together with your account ID. We never receive your payment card details.',
+          'Purchases: if you buy Premium, our billing provider RevenueCat (on top of the Apple App Store / Google Play) records your subscription status together with your account ID. A copy of your Premium status (whether it is active, the plan and when it last changed) is also kept in our Supabase database. We never receive your payment card details.',
         ],
       },
       {
@@ -130,14 +130,14 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
       {
         heading: 'Crash reports',
         paragraphs: [
-          'If the app crashes or hits an error, and this feature is enabled, error details (the error message, app version, device model, operating system and, if signed in, your anonymous account ID) are sent to our error-monitoring service, Sentry. Recipe content, email addresses, passwords and session tokens are not sent.',
+          'If the app crashes or hits an error, and this feature is enabled, error details (the error message, app version, device model, operating system and, if signed in, your pseudonymous account ID — a random identifier that does not contain your name or email) are sent to our error-monitoring service, Sentry. Recipe content, email addresses, passwords and session tokens are not sent.',
         ],
       },
       {
         heading: 'Services that process your data',
-        paragraphs: ['These services process data on our behalf. Some may process it outside the EU (for example in the United States).'],
+        paragraphs: ['These services process data on our behalf. Some may process it outside the EU (for example in the United States).', 'Like any internet service, they also receive your device’s IP address when the app connects to them.'],
         bullets: [
-          'Supabase — database, authentication, file storage and the account-deletion function (hosted in the EU, Frankfurt region).',
+          `Supabase — database, authentication, file storage and the account-deletion function (hosting region: ${dataRegion}).`,
           'RevenueCat — purchase and subscription status.',
           'Apple / Google — only if you choose “Continue with Apple” or “Continue with Google”; what they see about that sign-in is governed by their own privacy policies.',
           'Sentry — crash reports (if enabled).',
@@ -152,7 +152,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
       {
         heading: 'Retention and account deletion',
         paragraphs: [
-          'Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile, published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.',
+          'Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile, published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. We also ask RevenueCat to delete the purchase-status record linked to your account; the store’s own purchase history stays with Apple / Google. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.',
         ],
       },
       {

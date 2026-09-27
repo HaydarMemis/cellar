@@ -14,7 +14,7 @@ function mockBuilder(table: string) {
     mockCalls.push({ table, op, args });
     return b;
   };
-  for (const op of ['select', 'eq', 'or', 'order', 'limit', 'delete', 'lt']) b[op] = record(op);
+  for (const op of ['select', 'eq', 'or', 'order', 'limit', 'delete', 'lt', 'lte']) b[op] = record(op);
   b.upsert = (...args: unknown[]) => {
     mockCalls.push({ table, op: 'upsert', args });
     return Promise.resolve(mockNextResult);
@@ -125,6 +125,28 @@ describe('fetchPublicRecipesPage', () => {
     await supabaseRemoteRecipeBackend.fetchPublicRecipesPage(page.nextCursor, 1);
     const or = mockCalls.find((c) => c.op === 'or')!;
     expect(or.args[0]).toBe(`created_at.lt."2026-09-25T10:00:00.123456+00:00",and(created_at.eq."2026-09-25T10:00:00.123456+00:00",id.lt.${a})`);
+  });
+
+  it('adds a redundant created_at <= cursor bound so Postgres can use an index range scan', async () => {
+    const a = '22222222-2222-4222-8222-222222222222';
+    const cursor = encodeCursor({ createdAt: '2026-09-25T10:00:00.123456+00:00', id: a });
+
+    await supabaseRemoteRecipeBackend.fetchPublicRecipesPage(cursor, 20);
+    let lte = mockCalls.filter((c) => c.op === 'lte');
+    expect(lte).toEqual([{ table: 'recipes', op: 'lte', args: ['created_at', '2026-09-25T10:00:00.123456+00:00'] }]);
+    // The exact keyset semantics still come from the or() filter.
+    expect(mockCalls.filter((c) => c.op === 'or')).toHaveLength(1);
+
+    mockCalls.length = 0;
+    await supabaseRemoteRecipeBackend.fetchRecipesByOwner(recipe.ownerId, cursor, 20);
+    lte = mockCalls.filter((c) => c.op === 'lte');
+    expect(lte).toEqual([{ table: 'recipes', op: 'lte', args: ['created_at', '2026-09-25T10:00:00.123456+00:00'] }]);
+    expect(mockCalls.filter((c) => c.op === 'eq')).toContainEqual({ table: 'recipes', op: 'eq', args: ['owner_id', recipe.ownerId] });
+
+    // First page: no cursor, no bound.
+    mockCalls.length = 0;
+    await supabaseRemoteRecipeBackend.fetchPublicRecipesPage(null, 20);
+    expect(mockCalls.filter((c) => c.op === 'lte' || c.op === 'or')).toHaveLength(0);
   });
 });
 

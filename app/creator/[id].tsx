@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authBackend, DuplicateReportError, remoteRecipeBackend } from '../../src/data/community';
+import { ReportRateLimitedError, ReportTargetUnavailableError } from '../../src/data/supabase/SupabaseModerationBackend';
 import { isSupabaseConfigured } from '../../src/data/supabase/client';
 import { PersonalRecipe, UserProfile } from '../../src/domain/types';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -145,6 +146,10 @@ export default function CreatorProfileScreen() {
     } catch (e) {
       if (e instanceof DuplicateReportError) {
         Alert.alert(t('moderation.reportAlreadyOpenTitle'), t('moderation.reportAlreadyOpenMessage'));
+      } else if (e instanceof ReportTargetUnavailableError) {
+        Alert.alert(t('moderation.reportTargetUnavailableTitle'), t('moderation.reportTargetUnavailableMessage'));
+      } else if (e instanceof ReportRateLimitedError) {
+        Alert.alert(t('moderation.reportRateLimitedTitle'), t('moderation.reportRateLimitedMessage'));
       } else {
         Alert.alert(t('moderation.reportFailedTitle'), t('moderation.reportFailedMessage'));
       }

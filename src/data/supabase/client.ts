@@ -30,6 +30,55 @@ export const isSupabaseConfigured = !!supabaseUrl && !!supabaseAnonKey;
  * surface area — meaningful in a project that has been actively auditing
  * for native-module-related crash risk.
  */
+/** Auth (GoTrue) and database (PostgREST) calls: small JSON requests. */
+export const SUPABASE_REQUEST_TIMEOUT_MS = 15_000;
+/** Edge Functions (e.g. delete-account, which also removes Storage media). */
+export const SUPABASE_FUNCTION_TIMEOUT_MS = 60_000;
+
+/**
+ * Upper bound for a single request, by Supabase service. React Native's
+ * Android networking (OkHttp) is created with NO read timeout, so a request
+ * on a stalled network (captive portal, dead Wi-Fi that still reports
+ * "connected") can wait forever — and supabase-js holds its auth lock
+ * across a token refresh, so one stalled refresh blocks every other call.
+ * Storage (media uploads/downloads) is deliberately NOT capped here: a large
+ * upload on a slow connection can legitimately take longer.
+ */
+export function requestTimeoutFor(url: string): number | null {
+  if (url.includes('/auth/v1/') || url.includes('/rest/v1/')) return SUPABASE_REQUEST_TIMEOUT_MS;
+  if (url.includes('/functions/v1/')) return SUPABASE_FUNCTION_TIMEOUT_MS;
+  return null;
+}
+
+type FetchLike = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
+
+function requestUrl(input: RequestInfo): string {
+  if (typeof input === 'string') return input;
+  if (input && typeof (input as { url?: unknown }).url === 'string') return (input as { url: string }).url;
+  return String(input);
+}
+
+/**
+ * Wraps fetch so a Supabase request aborts after `requestTimeoutFor(url)`.
+ * A caller's own AbortSignal keeps working. An aborted request surfaces to
+ * supabase-js exactly like a network failure (auth: AuthRetryableFetchError,
+ * which keeps the stored session; PostgREST: a returned error).
+ */
+export function createTimeoutFetch(baseFetch: FetchLike, timeoutFor: (url: string) => number | null = requestTimeoutFor): FetchLike {
+  return (input, init) => {
+    const timeoutMs = timeoutFor(requestUrl(input));
+    if (timeoutMs == null) return baseFetch(input, init);
+    const controller = new AbortController();
+    const upstream = init?.signal;
+    if (upstream) {
+      if (upstream.aborted) controller.abort();
+      else upstream.addEventListener('abort', () => controller.abort());
+    }
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return baseFetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+}
+
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl as string, supabaseAnonKey as string, {
       auth: {
@@ -38,8 +87,26 @@ export const supabase = isSupabaseConfigured
         persistSession: true,
         detectSessionInUrl: false,
       },
+      // Resolved per call (not captured at module load) so a fetch polyfill
+      // or test mock installed later is still honored.
+      global: { fetch: createTimeoutFetch((input, init) => fetch(input, init)) as typeof fetch },
     })
   : null;
+
+/**
+ * The AsyncStorage key supabase-js persists the session under. Read from the
+ * client itself (it's what the client actually writes); the fallback mirrors
+ * supabase-js's own default (`sb-<first host label>-auth-token`). Deliberately
+ * NOT passed to createClient as an override — changing the key would sign
+ * every existing user out on update.
+ */
+export function supabaseAuthStorageKey(): string | null {
+  const fromClient = (supabase as unknown as { storageKey?: unknown } | null)?.storageKey;
+  if (typeof fromClient === 'string' && fromClient) return fromClient;
+  if (!supabaseUrl) return null;
+  const host = supabaseUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/:?#]/)[0].toLowerCase();
+  return host ? `sb-${host.split('.')[0]}-auth-token` : null;
+}
 
 /**
  * A store/TestFlight build with no Supabase env vars silently runs on the

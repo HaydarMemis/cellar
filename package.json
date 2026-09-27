@@ -13,7 +13,9 @@
     "expo-auth-session": "~57.0.12",
     "expo-constants": "~57.0.18",
     "expo-crypto": "~57.0.3",
+    "expo-dev-client": "~57.0.19",
     "expo-file-system": "~57.0.7",
+    "expo-font": "~57.0.4",
     "expo-haptics": "~57.0.3",
     "expo-image": "~57.0.5",
     "expo-image-manipulator": "~57.0.18",
@@ -56,7 +58,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "legal:export": "npx --yes tsx scripts/export-legal.ts",
-    "test:rls": "cd supabase/tests/rls-pglite && npm install --no-audit --no-fund && npm test",
+    "test:rls": "cd supabase/tests/rls-pglite && npm ci --no-audit --no-fund && npm test",
     "verify": "npm test -- --silent && npx tsc --noEmit && npx expo lint"
   },
   "private": true,

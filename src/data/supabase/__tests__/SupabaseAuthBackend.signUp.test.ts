@@ -7,6 +7,7 @@ import { supabaseAuthBackend } from '../SupabaseAuthBackend';
  * rejected by RLS (42501) — which the old code reported as "username taken".
  */
 const mockSignUp = jest.fn();
+const mockSignOut = jest.fn(() => Promise.resolve({ error: null }));
 const mockUpserts: unknown[] = [];
 let mockUpsertError: unknown = null;
 let mockExistingUsername: unknown = null;
@@ -14,7 +15,7 @@ let mockExistingUsername: unknown = null;
 jest.mock('../client', () => ({
   get supabase() {
     return {
-      auth: { signUp: (...a: unknown[]) => mockSignUp(...a) },
+      auth: { signUp: (...a: unknown[]) => mockSignUp(...a), signOut: (...a: unknown[]) => (mockSignOut as jest.Mock)(...a) },
       from: () => {
         const q: Record<string, unknown> = {};
         q.select = () => q;
@@ -35,6 +36,7 @@ const input = { username: 'Alice_1', displayName: 'Alice', email: 'Alice@Example
 
 beforeEach(() => {
   mockSignUp.mockReset();
+  mockSignOut.mockClear();
   mockUpserts.length = 0;
   mockUpsertError = null;
   mockExistingUsername = null;
@@ -71,6 +73,8 @@ it('a non-unique-violation profile error is not misreported as username-taken', 
   mockSignUp.mockResolvedValue({ data: { user: { id: 'u1', identities: [{ id: 'i' }] }, session: { access_token: 'x' } }, error: null });
   mockUpsertError = { code: '42501', message: 'rls' };
   expect(await supabaseAuthBackend.signUp(input)).toEqual({ ok: false, error: 'network-error' });
+  // The session sign-up created must not stay live behind a reported failure.
+  expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
   mockUpsertError = { code: '23505', message: 'duplicate' };
   expect(await supabaseAuthBackend.signUp(input)).toEqual({ ok: false, error: 'username-taken' });
 });

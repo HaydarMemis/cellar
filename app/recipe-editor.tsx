@@ -2,17 +2,18 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NewRecipeInput } from '../src/data/repositories/RecipeRepository';
 import { canCreateAnotherRecipe, FREE_RECIPE_LIMIT } from '../src/domain/entitlements';
 import { difficultyOptionIds, tasteOptionIds, typeOptionIds } from '../src/domain/filterOptions';
-import { prepareRecipePhoto } from '../src/data/localMedia';
+import { deleteManagedLocalPhoto, isManagedLocalPhoto, prepareRecipePhoto, resolveLocalPhotoUri } from '../src/data/localMedia';
+import { SyncErrorField, SyncErrorReason } from '../src/data/syncErrors';
 import { generateId } from '../src/domain/id';
 import { parseDecimal } from '../src/domain/parseDecimal';
 import { Difficulty, GlassType, LOCAL_GUEST_OWNER_ID, PreparationMethod, RecipeIngredient, Unit, Visibility } from '../src/domain/types';
-import { useTranslation } from '../src/i18n/useTranslation';
+import { UiKey, useTranslation } from '../src/i18n/useTranslation';
 import { Chip } from '../src/ui/components/Chip';
 import { FormField } from '../src/ui/components/FormField';
 import { IngredientPickerModal } from '../src/ui/components/IngredientPickerModal';
@@ -60,6 +61,16 @@ const glassTypeIds: GlassType[] = [
 /** Mirrors the database constraints on public.recipes (migrations 20260922000100 / 20260926120000), so a recipe that saves locally can also be published. */
 const RECIPE_LIMITS = { name: 120, description: 2000, garnish: 200, notes: 2000, stepLength: 500, steps: 30, ingredients: 40 } as const;
 
+/** "the photo is too large (photo)" — the human-readable half of "Couldn't publish: …". */
+function describeSyncError(t: (key: UiKey, options?: Record<string, string | number>) => string, reason: SyncErrorReason | string | undefined, field?: SyncErrorField | string): string {
+  const knownReasons: SyncErrorReason[] = ['photoMissing', 'photoUnsupported', 'photoTooLarge', 'photoRejected', 'invalidRecipe', 'notAllowed', 'rejected'];
+  const reasonText = t(`publish.syncErrorReason.${knownReasons.includes(reason as SyncErrorReason) ? (reason as SyncErrorReason) : 'rejected'}`);
+  const knownFields: SyncErrorField[] = ['name', 'description', 'method', 'glass', 'steps', 'tags', 'category', 'ingredients', 'garnish', 'abv', 'prepTime', 'difficulty', 'baseSpirit', 'photo', 'video'];
+  // Photo reasons already name the photo; don't repeat it.
+  if (!field || !knownFields.includes(field as SyncErrorField) || (field === 'photo' && reason !== 'invalidRecipe')) return reasonText;
+  return t('publish.syncErrorReasonWithField', { reason: reasonText, field: t(`publish.syncErrorField.${field as SyncErrorField}`) });
+}
+
 function emptyIngredient(): IngredientDraft {
   return { key: generateId('draft'), ingredientId: null, amountValue: '', unit: 'ml', note: '', isOptional: false };
 }
@@ -100,6 +111,31 @@ export default function RecipeEditorScreen() {
   const [saving, setSaving] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const savingRef = useRef(false);
+  /**
+   * Photos processed into documents/recipe-photos during THIS editing
+   * session. Any of them that no saved recipe ends up using (re-picked,
+   * removed, or the editor was left without saving) is deleted, so
+   * abandoned picks don't pile up on disk. A recipe's already-saved photo
+   * is never in here, so cancelling can't delete it.
+   */
+  const sessionPhotos = useRef(new Set<string>());
+
+  const discardSessionPhoto = (uri: string | undefined) => {
+    if (!uri || !sessionPhotos.current.has(uri)) return;
+    if (useRecipesStore.getState().recipes.some((r) => r.photoUri === uri)) return;
+    sessionPhotos.current.delete(uri);
+    deleteManagedLocalPhoto(uri);
+  };
+
+  useEffect(() => {
+    const picks = sessionPhotos.current;
+    return () => {
+      // Unmount (saved, cancelled, or swiped away): anything still unused goes.
+      const inUse = new Set(useRecipesStore.getState().recipes.map((r) => r.photoUri));
+      for (const uri of picks) if (!inUse.has(uri)) deleteManagedLocalPhoto(uri);
+      picks.clear();
+    };
+  }, []);
   const [ingredientDrafts, setIngredientDrafts] = useState<IngredientDraft[]>(
     existing?.ingredients.length
       ? existing.ingredients.map((ri) => ({
@@ -141,14 +177,24 @@ export default function RecipeEditorScreen() {
       const asset = result.assets[0];
       setPhotoBusy(true);
       try {
-        setPhotoUri(await prepareRecipePhoto({ uri: asset.uri, width: asset.width, height: asset.height }));
+        const prepared = await prepareRecipePhoto({ uri: asset.uri, width: asset.width, height: asset.height });
+        if (isManagedLocalPhoto(prepared)) sessionPhotos.current.add(prepared);
+        discardSessionPhoto(photoUri); // the pick this one replaces, if it was never saved
+        setPhotoUri(prepared);
+      } catch {
+        // Never fall back to the unprocessed original (full size, may carry
+        // EXIF/GPS) — keep the previous photo and tell the user.
+        Alert.alert(t('recipeEditor.photoProcessingFailedTitle'), t('recipeEditor.photoProcessingFailedMessage'));
       } finally {
         setPhotoBusy(false);
       }
     }
   };
 
-  const removePhoto = () => setPhotoUri(undefined);
+  const removePhoto = () => {
+    discardSessionPhoto(photoUri);
+    setPhotoUri(undefined);
+  };
 
   const canSave =
     !saving &&
@@ -240,7 +286,14 @@ export default function RecipeEditorScreen() {
       // The recipe itself IS saved on this device (local-first — see
       // RecipePublishError); only the publish half failed. Say exactly
       // that rather than implying the whole save was lost.
-      if (e instanceof RecipePublishError) {
+      if (e instanceof RecipePublishError && e.permanent) {
+        // The backend rejected it — no automatic retry will fix this, so
+        // don't promise one. Stay in the editor so the author can fix it.
+        Alert.alert(t('publish.syncRejectedTitle'), t('publish.syncRejectedMessage', { reason: describeSyncError(t, e.reason, e.field) }));
+        // A new recipe now exists locally: reopen it in edit mode so the
+        // next Save updates it (instead of creating a duplicate).
+        if (!isEditing && e.recipeId) router.replace({ pathname: '/recipe-editor', params: { id: e.recipeId } });
+      } else if (e instanceof RecipePublishError) {
         Alert.alert(t('publish.syncFailedTitle'), t('publish.syncFailedMessage'));
         router.back();
       } else {
@@ -272,6 +325,14 @@ export default function RecipeEditorScreen() {
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {existing?.syncError ? (
+          <View style={[styles.syncErrorBanner, { backgroundColor: theme.colors.surfaceAlt }]} accessibilityRole="alert">
+            <Ionicons name="alert-circle-outline" size={18} color={theme.colors.textSecondary} />
+            <Text variant="caption" color="secondary" style={{ flex: 1 }}>
+              {t('publish.syncRejectedBanner', { reason: describeSyncError(t, existing.syncError.reason, existing.syncError.field) })}
+            </Text>
+          </View>
+        ) : null}
         <Pressable
           onPress={pickPhoto}
           accessibilityRole="button"
@@ -283,7 +344,7 @@ export default function RecipeEditorScreen() {
               <ActivityIndicator color={theme.colors.textSecondary} />
             </View>
           ) : photoUri ? (
-            <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+            <Image source={{ uri: resolveLocalPhotoUri(photoUri) }} style={styles.photoPreview} />
           ) : (
             <View style={styles.photoPlaceholder}>
               <Ionicons name="camera-outline" size={26} color={theme.colors.textSecondary} />
@@ -599,6 +660,7 @@ function SingleChipField<T extends string>({
 
 const styles = StyleSheet.create({
   photoActions: { flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: -4 },
+  syncErrorBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

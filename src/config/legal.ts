@@ -8,6 +8,8 @@ export const LEGAL_ENTITY_NAME = process.env.EXPO_PUBLIC_LEGAL_ENTITY_NAME;
 export const LEGAL_ENTITY_ADDRESS = process.env.EXPO_PUBLIC_LEGAL_ENTITY_ADDRESS;
 export const LEGAL_JURISDICTION = process.env.EXPO_PUBLIC_LEGAL_JURISDICTION;
 export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL;
+/** Where the Supabase project is hosted, as shown in its dashboard (e.g. "EU (Frankfurt)"). */
+export const LEGAL_DATA_REGION = process.env.EXPO_PUBLIC_LEGAL_DATA_REGION;
 /** ISO date (YYYY-MM-DD) the reviewed documents take effect. */
 export const LEGAL_EFFECTIVE_DATE = process.env.EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE;
 
@@ -24,4 +26,4 @@ export const isLegalEntityConfigured = !!LEGAL_ENTITY_NAME;
  * documents were actually reviewed (EXPO_PUBLIC_LEGAL_REVIEWED=true) AND the
  * business details are filled in.
  */
-export const isLegalFinal = process.env.EXPO_PUBLIC_LEGAL_REVIEWED === 'true' && !!LEGAL_ENTITY_NAME && !!LEGAL_JURISDICTION && !!SUPPORT_EMAIL;
+export const isLegalFinal = process.env.EXPO_PUBLIC_LEGAL_REVIEWED === 'true' && !!LEGAL_ENTITY_NAME && !!LEGAL_JURISDICTION && !!SUPPORT_EMAIL && !!LEGAL_DATA_REGION;

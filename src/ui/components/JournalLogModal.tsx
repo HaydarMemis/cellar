@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { JournalEntry } from '../../domain/types';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -69,10 +69,18 @@ export function JournalLogModal({ visible, onClose, drinkKind, drinkId, drinkNam
 
   const handleSave = async () => {
     setSaving(true);
-    if (isEditing && editingEntry) {
-      await updateEntry(editingEntry.id, { rating, note: note.trim() || undefined });
-    } else {
-      await createEntry({ drinkKind, drinkId, drinkName, rating, note: note.trim() || undefined, madeAt: new Date().toISOString() });
+    try {
+      if (isEditing && editingEntry) {
+        await updateEntry(editingEntry.id, { rating, note: note.trim() || undefined });
+      } else {
+        await createEntry({ drinkKind, drinkId, drinkName, rating, note: note.trim() || undefined, madeAt: new Date().toISOString() });
+      }
+    } catch {
+      // Local storage write failed (storage writes now reject instead of
+      // silently pretending to succeed) — keep the sheet open with the input.
+      setSaving(false);
+      Alert.alert(t('common.genericErrorTitle'), t('common.genericErrorMessage'));
+      return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     setSaving(false);

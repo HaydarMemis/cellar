@@ -10,7 +10,7 @@ import { cocktails } from '../../src/data/catalog';
 import { getRelatedCocktails } from '../../src/domain/related';
 import { scaleIngredients } from '../../src/domain/scaling';
 import { getSubstitutesFor, getSubstitutionNoteKey } from '../../src/domain/substitutions';
-import { DrinkSource, PersonalRecipe } from '../../src/domain/types';
+import { DrinkSource, LOCAL_GUEST_OWNER_ID, PersonalRecipe } from '../../src/domain/types';
 import { matchesRecipeId, remoteRecipeId } from '../../src/domain/uuid';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { DrinkVisual } from '../../src/ui/components/DrinkVisual';
@@ -21,10 +21,10 @@ import { ScaleModal } from '../../src/ui/components/ScaleModal';
 import { Screen } from '../../src/ui/components/Screen';
 import { SectionLabel } from '../../src/ui/components/SectionLabel';
 import { Text } from '../../src/ui/components/Text';
-import { currentOwnerId } from '../../src/state/authStore';
+import { useAuthStore } from '../../src/state/authStore';
 import { useDiscoverFeedStore } from '../../src/state/discoverFeedStore';
 import { useFavoritesStore } from '../../src/state/favoritesStore';
-import { useRecipesStore } from '../../src/state/recipesStore';
+import { isConfirmedOnServer, RecipePublishError, useRecipesStore } from '../../src/state/recipesStore';
 import { useSettingsStore } from '../../src/state/settingsStore';
 import { useTheme } from '../../src/theme/useTheme';
 
@@ -44,6 +44,8 @@ export default function CocktailDetailScreen() {
   const isFavorite = useFavoritesStore((s) => s.isFavorite);
   const toggleFavorite = useFavoritesStore((s) => s.toggle);
   const recipes = useRecipesStore((s) => s.recipes);
+  // Same identity selector My Bar uses (reactive, unlike currentOwnerId()).
+  const ownerId = useAuthStore((s) => s.profile?.id ?? LOCAL_GUEST_OWNER_ID);
   const removeRecipe = useRecipesStore((s) => s.remove);
 
   const [servings, setServings] = useState(1);
@@ -66,10 +68,18 @@ export default function CocktailDetailScreen() {
   // one (see src/domain/uuid.ts) — or (b) someone else's published recipe,
   // which only exists on the backend. The local copy always wins so the
   // owner edits/deletes the real local record, never a read-only mirror.
-  const localRecipe = useMemo(
-    () => (kind === 'recipe' && id ? recipes.find((r) => matchesRecipeId(r.id, id)) : undefined),
-    [kind, id, recipes],
-  );
+  // Only this identity's own records — or another local account's recipe
+  // that is actually published (its content is public anyway). A private
+  // recipe of another account on this device (or the guest's while signed
+  // in) must never be shown here, e.g. via a deep link or stale favorite.
+  const localRecipe = useMemo(() => {
+    if (kind !== 'recipe' || !id) return undefined;
+    const matches = recipes.filter((r) => matchesRecipeId(r.id, id));
+    return (
+      matches.find((r) => r.ownerId === ownerId) ??
+      matches.find((r) => r.visibility === 'public' && !r.pendingSync && !r.syncError && isConfirmedOnServer(r))
+    );
+  }, [kind, id, recipes, ownerId]);
   const cachedRemote = useDiscoverFeedStore((s) => (kind === 'recipe' && id ? s.byId[id] : undefined));
   const fetchRemoteById = useDiscoverFeedStore((s) => s.fetchById);
   const [remoteLookup, setRemoteLookup] = useState<{ id: string; status: 'loading' | 'found' | 'missing' | 'error'; recipe?: PersonalRecipe } | null>(null);
@@ -129,7 +139,13 @@ export default function CocktailDetailScreen() {
     kind === 'recipe' ? { kind: 'recipe', item: item as never } : { kind: 'cocktail', item: item as never };
 
   const favorited = isFavorite(kind, item.id);
-  const isOwnPublicRecipe = kind === 'recipe' && (item as { visibility?: string }).visibility === 'public';
+  // "Public" (badge + share) only when it really is live in the community:
+  // not while a publish is pending, not when the backend rejected it
+  // (syncError), and — for a local record — only once confirmed on the server.
+  const isOwnPublicRecipe =
+    kind === 'recipe' &&
+    (item as { visibility?: string }).visibility === 'public' &&
+    (!localRecipe || (!localRecipe.pendingSync && !localRecipe.syncError && isConfirmedOnServer(localRecipe)));
   // Edit/delete must never show for a recipe this signed-in identity
   // doesn't own — recipesStore holds every locally-stored recipe
   // regardless of owner (private recipes never leave the device, so this
@@ -140,7 +156,7 @@ export default function CocktailDetailScreen() {
   // Only a recipe that actually exists in this device's store can be edited
   // or deleted from here — a backend copy of your own recipe (e.g. published
   // from another device) has no local record for the editor to update.
-  const isOwnRecipe = kind === 'recipe' && !!localRecipe && localRecipe.ownerId === currentOwnerId();
+  const isOwnRecipe = kind === 'recipe' && !!localRecipe && localRecipe.ownerId === ownerId;
 
   // Catalog cocktails resolve prose through the Turkish overlay; a personal
   // recipe is the user's own words and is never machine-translated.
@@ -153,7 +169,7 @@ export default function CocktailDetailScreen() {
   // version (useful even without the app) plus a cellar:// link that opens
   // this screen for anyone who has Cellar. Private recipes are never shared.
   const shareRecipeId = kind === 'recipe' ? remoteRecipeId(item.id) : item.id;
-  const canShare = kind === 'cocktail' || ((item as { visibility?: string }).visibility === 'public' && !localRecipe?.pendingSync);
+  const canShare = kind === 'cocktail' || isOwnPublicRecipe;
   const handleShare = () => {
     const lines = [
       item.name,
@@ -174,10 +190,12 @@ export default function CocktailDetailScreen() {
         onPress: async () => {
           try {
             await removeRecipe(item.id);
-          } catch {
+          } catch (e) {
             // Unpublishing failed, so nothing was deleted (see
             // recipesStore.remove) — the recipe is still here and still yours.
-            Alert.alert(t('cocktailDetail.deleteFailedTitle'), t('cocktailDetail.deleteFailedMessage'));
+            // A permanent rejection won't be fixed by a better connection.
+            const permanent = e instanceof RecipePublishError && e.permanent;
+            Alert.alert(t('cocktailDetail.deleteFailedTitle'), t(permanent ? 'cocktailDetail.deleteFailedPermanentMessage' : 'cocktailDetail.deleteFailedMessage'));
             return;
           }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
@@ -209,7 +227,7 @@ export default function CocktailDetailScreen() {
             <MetaPill label={tVocab(`difficulty.${item.difficulty}`)} />
             <MetaPill label={t('common.min', { count: item.prepTimeMinutes })} />
             {item.abv && <MetaPill label={t('cocktailDetail.abvApprox', { value: tNumber(item.abv.approx, 0) })} />}
-            {isOwnPublicRecipe && !localRecipe?.pendingSync && <MetaPill label={t('myBar.publicBadge')} />}
+            {isOwnPublicRecipe && <MetaPill label={t('myBar.publicBadge')} />}
             {isOwnRecipe && localRecipe?.pendingSync && (
               <MetaPill label={t(localRecipe.pendingSync === 'publish' ? 'publish.pendingPublishBadge' : 'publish.pendingUnpublishBadge')} />
             )}

@@ -2,9 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PurchaseErrorCode } from '../src/data/purchases';
+import { introOfferText } from '../src/data/purchases/introOfferText';
+import { openManageSubscription } from '../src/data/purchases/manageSubscription';
 import { FREE_RECIPE_LIMIT, PlanId, planIds, premiumFeatures } from '../src/domain/entitlements';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { Button } from '../src/ui/components/Button';
@@ -39,6 +41,7 @@ export default function PremiumScreen() {
   const loadOffers = useEntitlementStore((s) => s.loadOffers);
   const purchase = useEntitlementStore((s) => s.purchase);
   const restore = useEntitlementStore((s) => s.restore);
+  const managementUrl = useEntitlementStore((s) => s.managementUrl);
 
   const [selectedPlan, setSelectedPlan] = useState<PlanId>('yearly');
   const [busy, setBusy] = useState(false);
@@ -59,17 +62,20 @@ export default function PremiumScreen() {
       Alert.alert(t('premium.purchasePendingTitle'), t('premium.purchasePendingMessage'));
       return;
     }
-    const message =
-      error === 'network'
-        ? t('premium.purchaseNetworkMessage')
-        : error === 'not-allowed'
-          ? t('premium.purchaseNotAllowedMessage')
-          : error === 'already-owned'
-            ? t('premium.alreadyOwnedMessage')
-            : error === 'unavailable'
-              ? t('premium.unavailableMessage')
-              : t('premium.purchaseFailedMessage');
-    Alert.alert(t('premium.purchaseFailedTitle'), message);
+    if (error === 'not-activated') {
+      // The store took the payment — never say "didn't go through / not charged".
+      Alert.alert(t('premium.purchaseNotActivatedTitle'), t('premium.purchaseNotActivatedMessage'));
+      return;
+    }
+    const messages: Partial<Record<PurchaseErrorCode, string>> = {
+      network: t('premium.purchaseNetworkMessage'),
+      'not-allowed': t('premium.purchaseNotAllowedMessage'),
+      'already-owned': t('premium.alreadyOwnedMessage'),
+      unavailable: t('premium.unavailableMessage'),
+      'other-account': t('premium.purchaseOtherAccountMessage'),
+      'store-problem': t('premium.purchaseStoreProblemMessage'),
+    };
+    Alert.alert(t('premium.purchaseFailedTitle'), messages[error] ?? t('premium.purchaseFailedMessage'));
   };
 
   const runExclusive = async (work: () => Promise<void>) => {
@@ -101,16 +107,16 @@ export default function PremiumScreen() {
     runExclusive(async () => {
       const result = await restore();
       if (!result.ok) {
-        if (result.error !== 'cancelled') Alert.alert(t('premium.restoreFailedTitle'), t('premium.restoreFailedMessage'));
+        if (result.error === 'other-account') Alert.alert(t('premium.restoreFailedTitle'), t('premium.purchaseOtherAccountMessage'));
+        else if (result.error !== 'cancelled') Alert.alert(t('premium.restoreFailedTitle'), t('premium.restoreFailedMessage'));
         return;
       }
       if (result.status.isPremium) Alert.alert(t('premium.restoreSuccessTitle'));
       else Alert.alert(t('premium.restoreNothingTitle'), t('premium.restoreNothingMessage'));
     });
 
-  const openManageSubscription = () => {
-    const url = Platform.OS === 'ios' ? 'https://apps.apple.com/account/subscriptions' : 'https://play.google.com/store/account/subscriptions';
-    Linking.openURL(url).catch(() => undefined);
+  const handleManageSubscription = () => {
+    void openManageSubscription(managementUrl);
   };
 
   const plansUnavailable = serviceKind === 'unavailable' || (offersState === 'loaded' && visibleOffers.length === 0) || offersState === 'error';
@@ -157,8 +163,9 @@ export default function PremiumScreen() {
               </Text>
               <Text variant="bodyStrong">{activePlan ? t(planLabelKeys[activePlan]) : t('premium.title')}</Text>
             </View>
-            {serviceKind === 'store' && activePlan !== 'lifetime' && (
-              <Pressable onPress={openManageSubscription} accessibilityRole="link" style={styles.restoreRow} hitSlop={8}>
+            {/* Only when the store reports a subscription to manage for THIS account (also covers lifetime + a still-running subscription). */}
+            {serviceKind === 'store' && !!managementUrl && (
+              <Pressable onPress={handleManageSubscription} accessibilityRole="link" style={styles.restoreRow} hitSlop={8}>
                 <Text variant="captionStrong" color="accent">
                   {t('premium.manageSubscription')}
                 </Text>
@@ -194,6 +201,7 @@ export default function PremiumScreen() {
                 <View style={styles.planRow}>
                   {visibleOffers.map((offer) => {
                     const selected = effectiveSelection === offer.planId;
+                    const introLine = offer.introOffer ? introOfferText(offer.introOffer, offer.planId, offer.priceString, t) : null;
                     return (
                       <Pressable
                         key={offer.planId}
@@ -220,9 +228,9 @@ export default function PremiumScreen() {
                             {t('premium.perMonthStore', { price: offer.pricePerMonthString })}
                           </Text>
                         ) : null}
-                        {offer.introOffer ? (
-                          <Text variant="label" color="accent" style={{ marginTop: 2, textAlign: 'center' }}>
-                            {t('premium.introOfferLabel', { offer: offer.introOffer })}
+                        {introLine ? (
+                          <Text variant="label" color="accent" style={{ marginTop: 2, textAlign: 'center', paddingHorizontal: 4 }}>
+                            {introLine}
                           </Text>
                         ) : null}
                       </Pressable>

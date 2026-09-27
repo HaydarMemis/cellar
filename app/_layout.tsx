@@ -5,7 +5,7 @@ import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { initCrashReporting } from '../src/lib/crashReporting';
+import { initCrashReporting, reportError } from '../src/lib/crashReporting';
 import { ErrorBoundary } from '../src/ui/components/ErrorBoundary';
 import { BackgroundSync } from '../src/ui/components/BackgroundSync';
 import { LocalDataAdoptionPrompt } from '../src/ui/components/LocalDataAdoptionPrompt';
@@ -89,7 +89,12 @@ export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    hydrateStores().finally(() => setIsReady(true));
+    // hydrateStores never waits on the network indefinitely (see
+    // bootTimeouts) — a signed-in user starts from their cached identity
+    // and anything slower completes after the first render.
+    hydrateStores()
+      .catch((e) => reportError(e, { module: 'RootLayout', action: 'hydrateStores' }))
+      .finally(() => setIsReady(true));
   }, []);
 
   if (!isReady) {

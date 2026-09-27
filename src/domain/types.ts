@@ -169,6 +169,30 @@ export interface PersonalRecipe {
    * `photoUri === publishedPhoto.localUri`.
    */
   publishedPhoto?: { localUri: string; url: string };
+  /**
+   * Server-confirmed publication state:
+   * - an ISO timestamp: the backend confirmed the last publish (it exists remotely);
+   * - null: known NOT to exist remotely (never published, or unpublish confirmed);
+   * - undefined: unknown (recipes stored before this field existed) — see
+   *   isPossiblyOnServer() in recipesStore for how that is inferred.
+   */
+  publishedAt?: string | null;
+  /**
+   * Set when the backend REJECTED a publish/unpublish for a reason retrying
+   * can't fix (constraint violation, unsupported/missing photo, permission).
+   * Such a recipe is NOT pendingSync — it isn't retried automatically — and
+   * stays saved locally; saving it again re-attempts. `reason` is a
+   * SyncErrorReason code (src/data/syncErrors.ts), translated by the UI.
+   */
+  syncError?: { op: 'publish' | 'unpublish'; reason: string; field?: string; at: string };
+  /**
+   * The recipe's photo. A photo this app stored itself is kept as a
+   * container-relative reference (`recipe-photos/<file>.jpg`); older recipes
+   * may hold an absolute file:// URI from a previous app container. Always
+   * go through resolveLocalPhotoUri() (src/data/localMedia.ts) before
+   * rendering, reading or deleting it. Published recipes from the backend
+   * hold an https URL.
+   */
   photoUri?: string;
   /**
    * A short looping video for the recipe (Discover feed cards render this

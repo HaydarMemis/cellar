@@ -2,7 +2,7 @@ import { PersonalRecipe } from '../../domain/types';
 import { reportError } from '../../lib/crashReporting';
 import { supabase } from './client';
 import { isUuid, remoteRecipeId } from '../../domain/uuid';
-import { isRemoteMediaUrl, removeRecipeMedia, removeRecipeMediaKind, uploadRecipeMedia } from './mediaUpload';
+import { isRecipeMediaUrlFor, isRemoteMediaUrl, removeRecipeMedia, removeRecipeMediaKind, uploadRecipeMedia } from './mediaUpload';
 
 export interface RemoteRecipePage {
   recipes: PersonalRecipe[];
@@ -130,7 +130,11 @@ async function fetchPage(ownerId: string | null, cursor: string | null, limit: n
   if (cursor) {
     const decoded = decodeCursor(cursor);
     if (!decoded) return { recipes: [], nextCursor: null };
-    query = query.or(afterCursorFilter(decoded));
+    // `created_at <= cursor` is implied by the or() below (so results are
+    // identical), but Postgres can't derive an index range from an OR — the
+    // extra bound turns a scan-from-the-newest-row-and-filter (cost grows
+    // with page depth) into an index range scan on (created_at desc, id desc).
+    query = query.lte('created_at', decoded.createdAt).or(afterCursorFilter(decoded));
   }
   const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit);
   if (error) {
@@ -140,6 +144,19 @@ async function fetchPage(ownerId: string | null, cursor: string | null, limit: n
   const recipes = (data ?? []).map(toPersonalRecipe);
   const last = recipes[recipes.length - 1];
   return { recipes, nextCursor: recipes.length === limit && last ? encodeCursor(last) : null };
+}
+
+/**
+ * The last upload can be reused only while it still describes this photo
+ * AND lives under this owner's/recipe's storage path. After an unpublish
+ * (which deletes the object) or an owner change (account deletion,
+ * local-data adoption) the remembered URL points at a deleted object or at
+ * someone else's folder — reusing it would publish a dead link, so upload
+ * again instead.
+ */
+function canReusePublishedPhoto(recipe: PersonalRecipe, remoteId: string): boolean {
+  const published = recipe.publishedPhoto;
+  return !!published && published.localUri === recipe.photoUri && isRecipeMediaUrlFor(published.url, recipe.ownerId, remoteId, 'photo');
 }
 
 export const supabaseRemoteRecipeBackend: RemoteRecipeBackend = {
@@ -153,8 +170,8 @@ export const supabaseRemoteRecipeBackend: RemoteRecipeBackend = {
     const photoUrl = recipe.photoUri
       ? isRemoteMediaUrl(recipe.photoUri)
         ? recipe.photoUri
-        : recipe.publishedPhoto && recipe.publishedPhoto.localUri === recipe.photoUri
-          ? recipe.publishedPhoto.url // unchanged since the last upload
+        : canReusePublishedPhoto(recipe, id)
+          ? recipe.publishedPhoto!.url // unchanged since the last upload
           : await uploadRecipeMedia(recipe.ownerId, id, recipe.photoUri, 'photo')
       : null;
     const videoUrl = recipe.videoUri
@@ -163,7 +180,7 @@ export const supabaseRemoteRecipeBackend: RemoteRecipeBackend = {
         : await uploadRecipeMedia(recipe.ownerId, id, recipe.videoUri, 'video')
       : null;
 
-    const { error } = await client()
+    const { error, status } = await client()
       .from('recipes')
       .upsert({
         id,
@@ -187,7 +204,9 @@ export const supabaseRemoteRecipeBackend: RemoteRecipeBackend = {
       });
     if (error) {
       reportError(error, { module: 'RemoteRecipeBackend', action: 'publishRecipe', recipeId: id });
-      throw error;
+      // Keep the HTTP status with the error so classifySyncError can tell a
+      // rejected request (4xx) from a transient failure.
+      throw Object.assign(error, { status });
     }
 
     // The author removed a photo/video from an already-published recipe:

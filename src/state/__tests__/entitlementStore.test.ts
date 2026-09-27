@@ -8,6 +8,7 @@ const mockService = {
   restorePurchases: jest.fn<Promise<PurchaseResult>, []>(),
   identify: jest.fn<Promise<EntitlementStatus | null>, [string | null]>(),
   subscribe: jest.fn(() => () => undefined),
+  getManagementUrl: jest.fn<Promise<string | null>, []>(),
 };
 jest.mock('../../data/purchases', () => ({
   get purchaseService() {
@@ -103,5 +104,58 @@ describe('useEntitlementStore', () => {
     mockService.getOffers.mockResolvedValue([{ planId: 'monthly', priceString: '€4,99' }]);
     await useEntitlementStore.getState().loadOffers();
     expect(useEntitlementStore.getState()).toMatchObject({ offersState: 'loaded', offers: [{ planId: 'monthly', priceString: '€4,99' }] });
+  });
+
+  it('account switch with the store unreachable: the new account never inherits the previous Premium', async () => {
+    mockService.identify.mockResolvedValue(premium);
+    await useEntitlementStore.getState().identify('user-a');
+    expect(useEntitlementStore.getState().isPremium).toBe(true);
+
+    mockService.identify.mockResolvedValue(null); // logIn(B) failed / unknown
+    await useEntitlementStore.getState().identify('user-b');
+    expect(useEntitlementStore.getState()).toMatchObject({ isPremium: false, activePlan: null });
+    // …and it no longer re-reads the SDK's cached (possibly A's) customer info:
+    expect(mockService.getEntitlementStatus).not.toHaveBeenCalled();
+  });
+
+  it('SAME identity with the store unreachable keeps the last known Premium (offline never downgrades)', async () => {
+    mockService.identify.mockResolvedValue(premium);
+    await useEntitlementStore.getState().identify('user-a');
+    mockService.identify.mockResolvedValue(null);
+    await useEntitlementStore.getState().identify('user-a');
+    expect(useEntitlementStore.getState()).toMatchObject(premium);
+    mockService.getEntitlementStatus.mockResolvedValue(null);
+    await useEntitlementStore.getState().load();
+    expect(useEntitlementStore.getState()).toMatchObject(premium);
+  });
+
+  it('cold start: Premium loaded for the restored account survives an unknown identify of that same account', async () => {
+    let finishIdentify: (s: EntitlementStatus | null) => void = () => undefined;
+    mockService.identify.mockImplementation(() => new Promise((r) => (finishIdentify = r)));
+    const identifying = useEntitlementStore.getState().identify('user-c');
+    mockService.getEntitlementStatus.mockResolvedValue(premium);
+    await useEntitlementStore.getState().load();
+    finishIdentify(null);
+    await identifying;
+    expect(useEntitlementStore.getState().isPremium).toBe(true);
+  });
+
+  it('a slower, superseded identify never overwrites the newer identity’s status', async () => {
+    let finishA: (s: EntitlementStatus | null) => void = () => undefined;
+    mockService.identify.mockImplementationOnce(() => new Promise((r) => (finishA = r)));
+    const a = useEntitlementStore.getState().identify('user-a');
+    mockService.identify.mockResolvedValueOnce(free);
+    await useEntitlementStore.getState().identify('user-b');
+    finishA(premium);
+    await a;
+    expect(useEntitlementStore.getState().isPremium).toBe(false);
+  });
+
+  it('exposes the account’s subscription management URL', async () => {
+    mockService.identify.mockResolvedValue(premium);
+    mockService.getManagementUrl.mockResolvedValue('https://play.google.com/store/account/subscriptions?sku=x');
+    await useEntitlementStore.getState().identify('user-a');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useEntitlementStore.getState().managementUrl).toBe('https://play.google.com/store/account/subscriptions?sku=x');
   });
 });

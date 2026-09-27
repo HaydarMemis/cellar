@@ -1,10 +1,21 @@
-import { AuthError } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AuthError, isAuthError, isAuthRetryableFetchError, isAuthSessionMissingError } from '@supabase/supabase-js';
 import * as AuthSessionModule from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { AuthSession, UserProfile } from '../../domain/types';
 import { reportError } from '../../lib/crashReporting';
-import { AuthBackend, AuthErrorCode, AuthResult, LogInInput, PasswordResetOutcome, ProfilePatch, SignUpInput, SignUpOutcome } from '../community/AuthBackend';
-import { supabase } from './client';
+import {
+  AuthBackend,
+  AuthErrorCode,
+  AuthResult,
+  LogInInput,
+  PasswordResetOutcome,
+  ProfilePatch,
+  SessionInvalidError,
+  SignUpInput,
+  SignUpOutcome,
+} from '../community/AuthBackend';
+import { supabase, supabaseAuthStorageKey } from './client';
 
 /**
  * A REAL implementation of AuthBackend against Supabase Auth + a `profiles`
@@ -153,11 +164,118 @@ export async function createProfileOnFirstSignIn(
   return fetchProfile(userId);
 }
 
+/**
+ * How long app boot waits for supabase-js's getSession(). With an expired
+ * access token getSession() refreshes it first, and on a dead network that
+ * refresh retries with backoff for ~30 s before giving up — while the app
+ * sits on its splash screen.
+ */
+export const GET_SESSION_TIMEOUT_MS = 3000;
+/** Upper bound for an explicit sign-out's server call (the local session is removed regardless). */
+export const SIGN_OUT_TIMEOUT_MS = 5000;
+
+const TIMED_OUT = Symbol('timed-out');
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+type StoredSession = { user?: { id?: unknown; created_at?: unknown } | null; refresh_token?: unknown } | null;
+
+async function readStoredSession(): Promise<StoredSession> {
+  const key = supabaseAuthStorageKey();
+  if (!key) return null;
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as StoredSession) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The identity of the session supabase-js has persisted on this device,
+ * WITHOUT the network. Used only when getSession() can't answer because the
+ * network is down (timeout / retryable fetch error) — supabase-js keeps the
+ * stored session in exactly that case, so the person is still signed in and
+ * must not be treated as a guest for the whole app run.
+ */
+async function storedSessionIdentity(): Promise<AuthSession | null> {
+  const stored = await readStoredSession();
+  const id = stored?.user?.id;
+  if (typeof id !== 'string' || !id || typeof stored?.refresh_token !== 'string') return null;
+  const createdAt = typeof stored.user?.created_at === 'string' ? stored.user.created_at : null;
+  const parsed = createdAt ? new Date(createdAt) : null;
+  return { userId: id, createdAt: parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date(0).toISOString() };
+}
+
+/**
+ * The backend authoritatively rejected the session: the user no longer
+ * exists (deleted on another device), the JWT is invalid, or the server-side
+ * session is gone. Anything else (no connection, timeouts, 5xx) is NOT this.
+ */
+export function isSessionRejectedError(error: unknown): boolean {
+  if (!error || isAuthRetryableFetchError(error)) return false;
+  if (isAuthSessionMissingError(error)) return true;
+  if (!isAuthError(error)) return false;
+  const code = (error.code ?? '').toString().toLowerCase();
+  if (code === 'user_not_found' || code === 'bad_jwt' || code === 'session_not_found' || code === 'no_authorization') return true;
+  return error.status === 401 || error.status === 403 || error.status === 404;
+}
+
+/** This device only, never throws, and the stored session is gone afterwards even offline. */
+async function signOutLocally(): Promise<void> {
+  try {
+    const result = await withTimeout(client().auth.signOut({ scope: 'local' }), SIGN_OUT_TIMEOUT_MS);
+    if (result !== TIMED_OUT && !result.error) return;
+  } catch (e) {
+    reportError(e, { module: 'SupabaseAuthBackend', action: 'signOutLocally' });
+  }
+  await clearStoredSession();
+}
+
+/**
+ * Last resort for sign-out: supabase-js's signOut() does NOT remove the
+ * stored session when it can't first load it (an expired access token whose
+ * refresh fails offline) — the person would come back signed in on the next
+ * launch. The key is removed directly; an in-flight refresh that completes
+ * later discards its result because storage changed under it.
+ */
+async function clearStoredSession(): Promise<void> {
+  const key = supabaseAuthStorageKey();
+  if (!key) return;
+  try {
+    if (await AsyncStorage.getItem(key)) {
+      await AsyncStorage.removeItem(key);
+      await AsyncStorage.removeItem(`${key}-user`);
+      await AsyncStorage.removeItem(`${key}-code-verifier`);
+    }
+  } catch (e) {
+    reportError(e, { module: 'SupabaseAuthBackend', action: 'clearStoredSession' });
+  }
+}
+
 export const supabaseAuthBackend: AuthBackend = {
   async getSession(): Promise<AuthSession | null> {
-    const { data } = await client().auth.getSession();
-    if (!data.session) return null;
-    return { userId: data.session.user.id, createdAt: new Date(data.session.user.created_at).toISOString() };
+    let result: Awaited<ReturnType<ReturnType<typeof client>['auth']['getSession']>> | typeof TIMED_OUT;
+    try {
+      result = await withTimeout(client().auth.getSession(), GET_SESSION_TIMEOUT_MS);
+    } catch (e) {
+      reportError(e, { module: 'SupabaseAuthBackend', action: 'getSession' });
+      return storedSessionIdentity();
+    }
+    if (result === TIMED_OUT) return storedSessionIdentity();
+    const { data, error } = result;
+    if (data.session) return { userId: data.session.user.id, createdAt: new Date(data.session.user.created_at).toISOString() };
+    // Offline with an expired access token: supabase-js answers "no session"
+    // plus a retryable error but KEEPS the stored session (it will refresh
+    // once the network is back) — so this device is still signed in.
+    if (error && isAuthRetryableFetchError(error)) return storedSessionIdentity();
+    return null;
   },
 
   onSessionEnded(listener) {
@@ -169,9 +287,25 @@ export const supabaseAuthBackend: AuthBackend = {
     return () => data.subscription.unsubscribe();
   },
 
+  onSessionActive(listener) {
+    const { data } = client().auth.onAuthStateChange((event, session) => {
+      if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'USER_UPDATED') return;
+      const userId = session?.user?.id;
+      // Deferred for the same reason as onSessionEnded.
+      if (userId) setTimeout(() => listener(userId), 0);
+    });
+    return () => data.subscription.unsubscribe();
+  },
+
+  signOutLocally,
+
   async ensureProfileForCurrentSession() {
     const { data, error } = await client().auth.getUser();
-    if (error || !data.user) return undefined;
+    if (error) {
+      if (isSessionRejectedError(error)) throw new SessionInvalidError(error.message);
+      return undefined; // network — the caller may use its cached profile
+    }
+    if (!data.user) return undefined;
     return (await fetchProfile(data.user.id)) ?? createProfileOnFirstSignIn(data.user.id, data.user.user_metadata, data.user.email);
   },
 
@@ -266,6 +400,10 @@ export const supabaseAuthBackend: AuthBackend = {
       );
     if (upsertError) {
       reportError(upsertError, { module: 'SupabaseAuthBackend', action: 'signUp:profileUpsert' });
+      // The auth user and its session exist, but the app will report a
+      // failure and stay signed out — never leave a hidden live session
+      // behind. The profile is created on the next sign-in instead.
+      await signOutLocally();
       // Only a unique violation means the username was taken in a race
       // since the pre-check above; anything else (network, RLS) is not
       // the user's fault and must not be reported as if it were.
@@ -300,12 +438,28 @@ export const supabaseAuthBackend: AuthBackend = {
       // profile write never landed. See createProfileOnFirstSignIn.
       profile = await createProfileOnFirstSignIn(data.user.id, data.user.user_metadata, data.user.email);
     }
-    if (!profile) return { ok: false, error: 'unknown' };
+    if (!profile) {
+      // signInWithPassword already established a session. The app reports
+      // a failure and stays signed out, so drop it — otherwise every later
+      // request would silently run as this account while the UI shows a guest.
+      await signOutLocally();
+      return { ok: false, error: 'unknown' };
+    }
     return { ok: true, profile };
   },
 
   async logOut() {
-    await client().auth.signOut();
+    // Bounded: the server-side revoke is best-effort, but the local session
+    // must be gone when this returns, even offline (see clearStoredSession).
+    await withTimeout(
+      client()
+        // 'local': signing out on this phone must not end the person's
+        // sessions on their other devices (supabase-js defaults to global).
+        .auth.signOut({ scope: 'local' })
+        .catch((e) => reportError(e, { module: 'SupabaseAuthBackend', action: 'logOut' })),
+      SIGN_OUT_TIMEOUT_MS,
+    );
+    await clearStoredSession();
   },
 
   async updateProfile(userId, patch: ProfilePatch) {
@@ -332,7 +486,8 @@ export const supabaseAuthBackend: AuthBackend = {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'deleteAccount' });
       throw error;
     }
-    await client().auth.signOut().catch(() => undefined);
+    // The user no longer exists server-side; just drop this device's session.
+    await client().auth.signOut({ scope: 'local' }).catch(() => undefined);
   },
 
   async getSignInProviders() {
@@ -361,7 +516,9 @@ export const supabaseAuthBackend: AuthBackend = {
 
   async resendConfirmationEmail(email): Promise<PasswordResetOutcome> {
     const normalizedEmail = email.trim().toLowerCase();
-    const { error } = await client().auth.resend({ type: 'signup', email: normalizedEmail });
+    // Same redirect as signUp — without it the resent link lands on the
+    // project's Site URL instead of app/auth-callback.tsx.
+    const { error } = await client().auth.resend({ type: 'signup', email: normalizedEmail, options: { emailRedirectTo: emailConfirmationRedirectUrl() } });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'resendConfirmationEmail' });
       const mapped = mapAuthError(error, 'logIn');
@@ -392,6 +549,11 @@ export const supabaseAuthBackend: AuthBackend = {
     const { error } = await client().auth.updateUser({ password: newPassword });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'updatePassword' });
+      const code = ((error as { code?: string }).code ?? '').toLowerCase();
+      // "Secure password change" is on and this session is older than
+      // Supabase's recent-login window: a fresh sign-in is required.
+      if (code === 'reauthentication_needed' || code === 'reauthentication_not_valid') return { ok: false, error: 'reauthentication-needed' };
+      if (code === 'same_password') return { ok: false, error: 'same-password' };
       const mapped = mapAuthError(error, 'signUp');
       if (mapped === 'weak-password' || mapped === 'rate-limited' || mapped === 'network-error') return { ok: false, error: mapped };
       return { ok: false, error: 'unknown' };

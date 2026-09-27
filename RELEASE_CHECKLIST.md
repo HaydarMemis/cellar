@@ -18,12 +18,14 @@ Background and history live in `LAUNCH_READINESS.md`, `DATA_MIGRATION.md` and `M
 ```bash
 npm install                      # picks up the new native deps and the react-dom pin
 npm run verify                   # jest + tsc + lint
-npm run test:rls                 # migrations + RLS regression in embedded Postgres (36 checks)
+npm run test:rls                 # migrations + RLS regression in embedded Postgres (112 checks + schema.sql drift)
 
-supabase db push                 # applies 20260926120000_production_hardening.sql (additive only)
-supabase functions deploy delete-account          # Apple revocation + paginated media cleanup
-supabase functions deploy revenuecat-webhook      # verify_jwt=false now pinned in config.toml
-supabase migration list          # expect 8 local == 8 remote
+# ORDER MATTERS: set the secrets (§2 Supabase 6) and push the migrations BEFORE
+# deploying the functions — the new webhook calls apply_subscriber_state().
+supabase db push                 # applies 20260926120000_production_hardening.sql + 20260927120000_audit_hardening.sql
+supabase functions deploy delete-account          # Apple revocation + media cleanup + RevenueCat customer deletion
+supabase functions deploy revenuecat-webhook      # verify_jwt=false pinned in config.toml
+supabase migration list          # expect 9 local == 9 remote
 
 npx expo prebuild --clean        # only if you build locally; the old ios/ folder is stale
 eas build --profile preview --platform all        # internal test build
@@ -52,13 +54,17 @@ In `eas.json` → `submit.production`, replace `REPLACE_WITH_*` (Apple ID email,
 Bundle id / package is `com.ecclesia.coctail`. Decide it is final **before** the first store upload; it can never change afterwards.
 
 ### Supabase dashboard (project `<project-ref>`)
-1. **Auth → URL Configuration → Redirect URLs:** `cellar://`, `cellar://reset-password`, `cellar://auth-callback`. Site URL: `cellar://`.
+1. **Auth → URL Configuration → Redirect URLs:** `cellar://`, `cellar://reset-password`, `cellar://auth-callback`. Site URL: `cellar://`. Keep the default email templates' `{{ .ConfirmationURL }}` (the app uses the implicit flow and reads tokens from the link fragment).
+   - Leave **Secure password change** as you prefer: if enabled, users whose session is older than 24 h must sign in again before changing their password (the app tells them so).
+   - **Storage custom domain:** if you ever serve Storage from a custom domain, the `recipe_media_url_ok` check in `20260927120000_audit_hardening.sql` must be updated in a new migration, or publishing with a photo is rejected.
 2. **Auth → Email → SMTP:** configure a real provider (Resend, Postmark, SES, Mailgun…). The built-in sender only delivers to project team members and is rate-limited, so real users would get **no** confirmation or reset emails. Then raise the email rate limit (Auth → Rate Limits).
 3. **Auth → Email templates:** translate the confirmation and recovery templates if you want Turkish emails. Keep `{{ .ConfirmationURL }}`.
 4. **Auth → Providers → Apple:** enable it and add `com.ecclesia.coctail` to *Client IDs* (native sign-in uses the bundle id).
 5. **Auth → Providers → Google:** enable it with the **Web** client id and secret, add the iOS and Android client ids to *Client IDs*, and turn on **Skip nonce checks** (required by the native iOS SDK).
 6. **Edge Function secrets** (`supabase secrets set …`):
-   - `REVENUECAT_WEBHOOK_AUTH_HEADER`: a long random string, also pasted into RevenueCat.
+   - `REVENUECAT_WEBHOOK_AUTH_HEADER`: a long random string, pasted **byte-for-byte** as RevenueCat's webhook Authorization header value (the whole header is compared, so if you enter `Bearer xyz` in RevenueCat, the secret must be `Bearer xyz`).
+   - `REVENUECAT_SECRET_API_KEY`: a RevenueCat **v1 secret** API key (`sk_…`, Project settings → API keys → Secret keys). Required by the webhook (it re-reads the subscriber on every event; without it every event returns 500 and RevenueCat retries) and used by `delete-account` to delete the RevenueCat customer.
+   - Do **not** set `ALLOW_SANDBOX_EVENTS` on production (only on a staging project); sandbox/TestFlight purchases are then ignored by the server mirror.
    - For Apple token revocation on account deletion (App Review 5.1.1(v)): `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_CLIENT_ID=com.ecclesia.coctail`, `APPLE_PRIVATE_KEY` (the `.p8` contents, with the Sign in with Apple key enabled).
 7. Run `supabase db push` and the two `functions deploy` commands (§1).
 8. Moderation: reports land in `public.reports` (index on `status, created_at`). Assign someone to review open reports in the dashboard at least daily; the Community Guidelines state a 24-hour review target.
@@ -104,17 +110,21 @@ Configure the OAuth consent screen: app name, support email, privacy policy URL.
 ### RevenueCat
 1. Create a project and add the iOS app (App Store Connect shared secret / in-app purchase key) and the Android app (Play service account).
 2. Entitlement with identifier exactly **`premium`**, attached to all three products.
-3. Offering marked *current*, using the package types **Monthly**, **Annual** and **Lifetime**.
+3. Offering marked *current*, using the built-in package types **Monthly** (`$rc_monthly`), **Annual** (`$rc_annual`) and **Lifetime** (`$rc_lifetime`). Custom package identifiers are not read by the app.
+   - iOS app: add the **In-App Purchase Key** (.p8 + Issuer ID) — required by StoreKit 2 in SDK v10 — and point App Store Server Notifications V2 at RevenueCat.
+   - Android app: Play service-account JSON and Real-time Developer Notifications (Pub/Sub topic).
+   - Keep the default restore behavior **Transfer to new App User ID** (a guest purchase moves to the account on sign-in).
 4. Integrations → Webhook:
    - URL `https://<project-ref>.supabase.co/functions/v1/revenuecat-webhook`.
    - Authorization header = the same value as `REVENUECAT_WEBHOOK_AUTH_HEADER`.
-5. Copy the public iOS and Android API keys into EAS.
+5. Copy the public iOS (`appl_…`) and Android (`goog_…`) API keys into EAS. Never a `test_…` key — release builds ignore it and show purchases as unavailable.
+6. Create a **v1 secret API key** for `REVENUECAT_SECRET_API_KEY` (Supabase secret, above). Never put it in EAS or the app.
 
 ### SMTP / email provider
 Verify your sending domain (SPF, DKIM, DMARC) and enter the SMTP credentials in Supabase. Send a real confirmation and reset email to your own inbox before submission.
 
 ### Legal / privacy hosting
-1. Fill in: `EXPO_PUBLIC_LEGAL_ENTITY_NAME`, `…_ENTITY_ADDRESS`, `…_JURISDICTION`, `EXPO_PUBLIC_SUPPORT_EMAIL`, `…_LEGAL_EFFECTIVE_DATE`.
+1. Fill in: `EXPO_PUBLIC_LEGAL_ENTITY_NAME`, `…_ENTITY_ADDRESS`, `…_JURISDICTION`, `EXPO_PUBLIC_LEGAL_DATA_REGION` (the Supabase project region exactly as Settings → General shows it), `EXPO_PUBLIC_SUPPORT_EMAIL`, `…_LEGAL_EFFECTIVE_DATE`.
 2. Have a lawyer review the EN and TR texts in `src/content/legal/` (KVKK / GDPR rights section is explicitly marked for completion).
 3. After review set `EXPO_PUBLIC_LEGAL_REVIEWED=true`. That removes the in-app "draft" banner.
 4. Run `npm run legal:export` with the same env vars and host `legal/generated/*.md` (or HTML rendered from them) at stable HTTPS URLs. Set `EXPO_PUBLIC_PRIVACY_POLICY_URL`, `…_TERMS_URL`, `…_COMMUNITY_GUIDELINES_URL` and `…_ACCOUNT_DELETION_URL`.

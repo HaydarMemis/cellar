@@ -199,3 +199,20 @@ that failed (offline, server error). It is persisted, retried automatically on
 sign-in, foreground and reconnect (`BackgroundSync`), and cleared once the
 backend confirms. A recipe is never deleted locally while a public copy might
 still exist remotely.
+
+## Additional keys (production hardening, 27 Sep 2026)
+
+- `<key>.corrupt-<timestamp>` — written by `JsonStore` before it ever drops
+  data it can't read (unparseable JSON, or individual array elements that fail
+  validation). Only the valid elements are kept in the live key; the raw value
+  is preserved here for support/recovery and reported to crash reporting.
+- `@bar/recipeTombstones` — "owed unpublish" entries for recipes deleted
+  offline whose publish was never confirmed by the server; retried by
+  `retryPendingSync` so no public copy is left behind.
+- Recipes gain optional `publishedAt` (server-confirmed publication time,
+  `null` = known unpublished, absent = pre-update record, inferred from
+  `visibility`/`pendingSync`/`publishedPhoto`) and `syncError` (a permanent
+  publish failure shown to the user instead of retrying forever).
+- Local photo URIs are now stored relative to the documents directory
+  (`recipe-photos/<name>.jpg`); older absolute `file://` URIs are resolved by
+  file name at read time, so no rewrite migration is needed.

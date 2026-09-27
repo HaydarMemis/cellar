@@ -141,4 +141,113 @@ describe('JsonStore', () => {
       expect(await store.read()).toEqual([]);
     });
   });
+
+  describe('damaged data is never silently destroyed', () => {
+    interface Item {
+      id: string;
+    }
+    function isItemArray(value: unknown): value is Item[] {
+      return Array.isArray(value) && value.every((v) => v && typeof v === 'object' && typeof (v as Item).id === 'string');
+    }
+    async function backups(key: string): Promise<[string, string | null][]> {
+      const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(`${key}.corrupt-`));
+      return (await AsyncStorage.multiGet(keys)) as [string, string | null][];
+    }
+
+    it('one invalid element no longer empties the collection: valid elements are kept', async () => {
+      await AsyncStorage.setItem('@test/partial', JSON.stringify([{ id: 'a' }, { nope: true }, { id: 'b' }]));
+      const store = new JsonStore('@test/partial', isItemArray, []);
+      expect(await store.read()).toEqual([{ id: 'a' }, { id: 'b' }]);
+    });
+
+    it('backs up the original raw value before a write drops the invalid elements', async () => {
+      const raw = JSON.stringify([{ id: 'a' }, { nope: true }]);
+      await AsyncStorage.setItem('@test/partial-update', raw);
+      const store = new JsonStore('@test/partial-update', isItemArray, []);
+
+      await store.update((all) => [...all, { id: 'c' }]);
+
+      expect(JSON.parse((await AsyncStorage.getItem('@test/partial-update'))!)).toEqual([{ id: 'a' }, { id: 'c' }]);
+      const saved = await backups('@test/partial-update');
+      expect(saved).toHaveLength(1);
+      expect(saved[0][1]).toBe(raw);
+    });
+
+    it('unparseable JSON is backed up before update() writes over it', async () => {
+      await AsyncStorage.setItem('@test/garbage', 'not json{{{');
+      const store = new JsonStore('@test/garbage', isItemArray, []);
+
+      await store.update((all) => [...all, { id: 'new' }]);
+
+      expect(JSON.parse((await AsyncStorage.getItem('@test/garbage'))!)).toEqual([{ id: 'new' }]);
+      expect((await backups('@test/garbage')).map(([, v]) => v)).toEqual(['not json{{{']);
+    });
+
+    it('does not create a new backup on every read of the same damaged value', async () => {
+      await AsyncStorage.setItem('@test/once', 'broken');
+      await new JsonStore('@test/once', isItemArray, []).read();
+      await new JsonStore('@test/once', isItemArray, []).read(); // e.g. the next app launch
+      expect(await backups('@test/once')).toHaveLength(1);
+    });
+
+    it('refuses to overwrite damaged data it could not back up (and leaves it untouched)', async () => {
+      await AsyncStorage.setItem('@test/no-backup', 'broken');
+      const store = new JsonStore('@test/no-backup', isItemArray, []);
+      // The backup is the first write update() attempts on damaged data.
+      jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(store.update((all) => [...all, { id: 'x' }])).rejects.toThrow(/could not be backed up/);
+      expect(await AsyncStorage.getItem('@test/no-backup')).toBe('broken');
+    });
+
+    it('a valid stored value is never backed up', async () => {
+      await AsyncStorage.setItem('@test/valid', JSON.stringify([{ id: 'a' }]));
+      await new JsonStore('@test/valid', isItemArray, []).update((all) => all);
+      expect(await backups('@test/valid')).toHaveLength(0);
+    });
+
+    it('non-array stores still fall back as before (nothing to salvage) but keep a backup', async () => {
+      await AsyncStorage.setItem('@test/object', JSON.stringify({ completed: 'yes' }));
+      const isState = (v: unknown): v is { completed: boolean } => !!v && typeof (v as { completed?: unknown }).completed === 'boolean';
+      const store = new JsonStore('@test/object', isState, { completed: false });
+      expect(await store.read()).toEqual({ completed: false });
+      expect(await backups('@test/object')).toHaveLength(1);
+    });
+  });
+
+  describe('storage failures surface to callers', () => {
+    it('write() rejects when AsyncStorage.setItem fails', async () => {
+      const store = new JsonStore('@test/write-fail', isStringArray, []);
+      jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));
+      await expect(store.write(['a'])).rejects.toThrow('disk full');
+    });
+
+    it('update() rejects when AsyncStorage.setItem fails', async () => {
+      const store = new JsonStore('@test/update-fail', isStringArray, []);
+      jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));
+      await expect(store.update((c) => [...c, 'a'])).rejects.toThrow('disk full');
+    });
+
+    it('update() rejects without writing when the stored value cannot even be read', async () => {
+      await AsyncStorage.setItem('@test/read-fail', JSON.stringify(['keep']));
+      const store = new JsonStore('@test/read-fail', isStringArray, []);
+      jest.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('io'));
+      await expect(store.update(() => ['clobbered'])).rejects.toThrow();
+      expect(JSON.parse((await AsyncStorage.getItem('@test/read-fail'))!)).toEqual(['keep']);
+    });
+
+    it('the queue keeps working after a mutator throws or a write fails', async () => {
+      const store = new JsonStore('@test/queue', isStringArray, []);
+      await expect(
+        store.update(() => {
+          throw new Error('bad mutator');
+        }),
+      ).rejects.toThrow('bad mutator');
+      jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));
+      await expect(store.write(['lost'])).rejects.toThrow('disk full');
+
+      await expect(store.update((c) => [...c, 'after'])).resolves.toEqual(['after']);
+      expect(await store.read()).toEqual(['after']);
+    });
+  });
 });

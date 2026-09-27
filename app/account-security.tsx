@@ -45,7 +45,14 @@ export default function AccountSecurityScreen() {
       setNewPassword('');
       Alert.alert(t('accountSecurity.passwordChangedTitle'), t('accountSecurity.passwordChangedMessage'));
     } else {
-      Alert.alert(t('accountSecurity.passwordChangeFailedTitle'), t('accountSecurity.passwordChangeFailedMessage'));
+      const messages: Partial<Record<typeof result.error, string>> = {
+        'reauthentication-needed': t('accountSecurity.reauthenticationNeededMessage'),
+        'same-password': t('accountSecurity.samePasswordMessage'),
+        'weak-password': t('auth.errorWeakPassword'),
+        'rate-limited': t('auth.errorRateLimited'),
+        'network-error': t('auth.errorNetworkError'),
+      };
+      Alert.alert(t('accountSecurity.passwordChangeFailedTitle'), messages[result.error] ?? t('accountSecurity.passwordChangeFailedMessage'));
     }
   };
 

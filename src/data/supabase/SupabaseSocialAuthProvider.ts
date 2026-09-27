@@ -109,8 +109,12 @@ async function finishSignIn(
     return { ok: true, profile };
   } catch (e) {
     reportError(e, { module: 'SupabaseSocialAuthProvider', action });
-    // Don't leave a half-signed-in session behind with no profile.
-    await client().auth.signOut().catch(() => undefined);
+    // Don't leave a half-signed-in session behind with no profile. Local
+    // scope: this device only — a global sign-out would also revoke the
+    // person's sessions on their other devices.
+    await client()
+      .auth.signOut({ scope: 'local' })
+      .catch(() => undefined);
     return { ok: false, error: 'failed' };
   }
 }
@@ -174,6 +178,12 @@ async function signInWithGoogle(): Promise<SocialAuthResult> {
   }
   if (!idToken) return { ok: false, error: 'failed' };
 
+  // No nonce here, deliberately: @react-native-google-signin/google-signin
+  // v16's free API (GoogleSignin.signIn) accepts only `loginHint` — there is
+  // no way to pass a nonce — yet the native iOS SDK embeds its own nonce in
+  // the ID token that the app can't read. Supabase's Google provider must
+  // therefore have "Skip nonce checks" ON (see .env.example and
+  // RELEASE_CHECKLIST.md), or every iOS Google sign-in fails.
   const { data, error } = await client().auth.signInWithIdToken({ provider: 'google', token: idToken });
   if (error || !data.user) {
     reportError(error ?? new Error('signInWithIdToken returned no user'), { module: 'SupabaseSocialAuthProvider', action: 'googleIdTokenExchange' });

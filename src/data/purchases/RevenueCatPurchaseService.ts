@@ -1,8 +1,8 @@
 import { Platform } from 'react-native';
-import type { CustomerInfo, PurchasesPackage } from 'react-native-purchases';
+import type { CustomerInfo, PurchasesIntroPrice, PurchasesPackage } from 'react-native-purchases';
 import { PlanId } from '../../domain/entitlements';
 import { reportError } from '../../lib/crashReporting';
-import { EntitlementStatus, PlanOffer, PurchaseErrorCode, PurchaseService } from './PurchaseService';
+import { EntitlementStatus, IntroOffer, IntroPeriodUnit, PlanOffer, PurchaseErrorCode, PurchaseService } from './PurchaseService';
 
 /**
  * A REAL billing implementation against RevenueCat (wraps StoreKit on iOS,
@@ -41,12 +41,32 @@ import { EntitlementStatus, PlanOffer, PurchaseErrorCode, PurchaseService } from
 /** Must match the entitlement identifier configured in the RevenueCat dashboard (Entitlements tab) exactly, or every purchase will look like it granted nothing. */
 export const PREMIUM_ENTITLEMENT_ID = 'premium';
 
+let reportedTestKeyInRelease = false;
+
+/**
+ * RevenueCat "Test Store" keys (prefix `test_`) simulate purchases without
+ * charging anyone. A release build must never use one — treat billing as
+ * unavailable there (the paywall says so) and report it loudly.
+ */
+export function usableRevenueCatKey(key: string | undefined, isDev: boolean): string | undefined {
+  if (!key) return undefined;
+  if (!isDev && key.startsWith('test_')) {
+    if (!reportedTestKeyInRelease) {
+      reportedTestKeyInRelease = true;
+      reportError(new Error('RevenueCat Test Store key (test_…) in a release build — billing disabled'), { module: 'RevenueCatPurchaseService', action: 'apiKey' });
+    }
+    return undefined;
+  }
+  return key;
+}
+
 function revenueCatApiKey(): string | undefined {
-  return Platform.select<string | undefined>({
+  const key = Platform.select<string | undefined>({
     ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,
     android: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY,
     default: undefined,
   });
+  return usableRevenueCatKey(key, typeof __DEV__ !== 'undefined' && __DEV__);
 }
 
 export function isRevenueCatConfigured(): boolean {
@@ -106,13 +126,18 @@ export function statusFromCustomerInfo(info: CustomerInfo, fallbackPlan: PlanId 
   return { isPremium: true, activePlan: activePlan ?? fallbackPlan };
 }
 
-/** RevenueCat PURCHASES_ERROR_CODE values (react-native-purchases) → this app's error codes. */
+/** RevenueCat PURCHASES_ERROR_CODE values (react-native-purchases v10 generated/error-codes) → this app's error codes. */
 export function purchaseErrorFrom(e: unknown): PurchaseErrorCode {
   const err = e as { code?: string; userCancelled?: boolean } | undefined;
   if (err?.userCancelled || err?.code === '1') return 'cancelled';
   switch (err?.code) {
     case '20':
       return 'pending';
+    case '7': // RECEIPT_ALREADY_IN_USE_ERROR
+    case '13': // RECEIPT_IN_USE_BY_OTHER_SUBSCRIBER_ERROR
+      return 'other-account';
+    case '2': // STORE_PROBLEM_ERROR
+      return 'store-problem';
     case '10':
     case '35':
     case '32':
@@ -128,6 +153,45 @@ export function purchaseErrorFrom(e: unknown): PurchaseErrorCode {
       return 'unavailable';
     default:
       return 'failed';
+  }
+}
+
+const INTRO_UNITS: Record<string, IntroPeriodUnit> = { DAY: 'day', WEEK: 'week', MONTH: 'month', YEAR: 'year' };
+
+/** RevenueCat's intro price → this app's structured intro offer (undefined if unusable). */
+export function introOfferFrom(intro: PurchasesIntroPrice | null | undefined): IntroOffer | undefined {
+  if (!intro) return undefined;
+  const periodUnit = INTRO_UNITS[(intro.periodUnit ?? '').toUpperCase()];
+  if (!periodUnit || !(intro.periodNumberOfUnits > 0)) return undefined;
+  return {
+    kind: intro.price === 0 ? 'free-trial' : 'intro-price',
+    priceString: intro.priceString,
+    periodUnit,
+    periodCount: intro.periodNumberOfUnits,
+    cycles: intro.cycles > 0 ? intro.cycles : 1,
+  };
+}
+
+/** INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE (react-native-purchases). */
+const INTRO_ELIGIBLE = 2;
+
+/**
+ * Product ids whose intro offer THIS user may actually get. iOS: StoreKit
+ * eligibility via RevenueCat — only ELIGIBLE counts (UNKNOWN shows the
+ * regular price, as RevenueCat recommends, rather than promising a trial the
+ * person then doesn't get). Android: Google Play only returns offers the
+ * user is eligible for, so a present introPrice is eligible.
+ */
+async function introEligibleProductIds(sdk: PurchasesDefault, packages: PurchasesPackage[]): Promise<Set<string>> {
+  const withIntro = packages.filter((p) => !!p.product.introPrice).map((p) => p.product.identifier);
+  if (withIntro.length === 0) return new Set();
+  if (Platform.OS !== 'ios') return new Set(withIntro);
+  try {
+    const eligibility = await sdk.checkTrialOrIntroductoryPriceEligibility(withIntro);
+    return new Set(withIntro.filter((id) => (eligibility[id]?.status as number | undefined) === INTRO_ELIGIBLE));
+  } catch (e) {
+    reportError(e, { module: 'RevenueCatPurchaseService', action: 'introEligibility' });
+    return new Set();
   }
 }
 
@@ -152,8 +216,52 @@ async function ensureSdkListener(): Promise<void> {
   sdkListenerInstalled = true;
   sdk.addCustomerInfoUpdateListener((info) => {
     const status = statusFromCustomerInfo(info);
-    for (const listener of listeners) listener(status);
+    // An update for an identity the app has already switched away from
+    // (e.g. a logIn that failed) must not be presented to the current one.
+    void identityMatches(sdk).then((matches) => {
+      if (!matches) return;
+      for (const listener of listeners) listener(status);
+    });
   });
+}
+
+/**
+ * The identity the APP wants billing to be for: the signed-in Supabase user
+ * id, null for a guest (RevenueCat anonymous id), undefined until auth has
+ * said. RevenueCat's own current identity can lag behind it — sdk.logIn(B)
+ * can fail (offline) while the SDK is still logged in as A — and its
+ * customer info then belongs to A. Nothing here ever reports one identity's
+ * entitlements to another: see ensureIdentity.
+ */
+let desiredUserId: string | null | undefined;
+
+const FREE: EntitlementStatus = { isPremium: false, activePlan: null };
+
+async function identityMatches(sdk: PurchasesDefault): Promise<boolean> {
+  if (desiredUserId === undefined) return true;
+  try {
+    if (desiredUserId === null) return await sdk.isAnonymous();
+    return (await sdk.getAppUserID()) === desiredUserId;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Makes RevenueCat's identity match desiredUserId, retrying the logIn/logOut
+ * that failed earlier. Resolves false if it still doesn't match — callers
+ * must then not use (or act on) the SDK's customer info.
+ */
+async function ensureIdentity(sdk: PurchasesDefault): Promise<boolean> {
+  if (await identityMatches(sdk)) return true;
+  const target = desiredUserId;
+  try {
+    if (target) await sdk.logIn(target);
+    else await sdk.logOut();
+  } catch (e) {
+    reportError(e, { module: 'RevenueCatPurchaseService', action: 'ensureIdentity' });
+  }
+  return identityMatches(sdk);
 }
 
 /**
@@ -162,12 +270,22 @@ async function ensureSdkListener(): Promise<void> {
  * and with null on sign-out. The id is what the revenuecat-webhook Edge
  * Function receives as `app_user_id` and mirrors into `public.subscribers`.
  * `logIn` also transfers a purchase made while anonymous to the account.
+ *
+ * Returns that identity's status; null = unknown right now (e.g. offline,
+ * SDK already on this identity) — never another identity's status: if the
+ * switch didn't happen, the answer is "free" until it does.
  */
 async function identify(userId: string | null): Promise<EntitlementStatus | null> {
+  desiredUserId = userId;
   const sdk = await getSdk();
   if (!sdk) return null;
   try {
     if (userId) {
+      // Already this identity (RevenueCat persists it across launches):
+      // no logIn round-trip — which also keeps an offline cold start on the
+      // SDK's cached customer info instead of a failed network call.
+      const current = await sdk.getAppUserID().catch(() => null);
+      if (current === userId) return statusFromCustomerInfo(await sdk.getCustomerInfo());
       const { customerInfo } = await sdk.logIn(userId);
       return statusFromCustomerInfo(customerInfo);
     }
@@ -177,7 +295,8 @@ async function identify(userId: string | null): Promise<EntitlementStatus | null
   } catch (e) {
     // Never let identity sync block auth.
     reportError(e, { module: 'RevenueCatPurchaseService', action: 'identify' });
-    return null;
+    if (desiredUserId !== userId) return null; // superseded by a newer identify
+    return (await identityMatches(sdk)) ? null : FREE;
   }
 }
 
@@ -193,6 +312,9 @@ export const revenueCatPurchaseService: PurchaseService = {
     const sdk = await getSdk();
     if (!sdk) return null;
     void ensureSdkListener();
+    // Still on another identity (a logIn/logOut that failed and can't be
+    // retried right now): that identity's cached Premium is not ours.
+    if (!(await ensureIdentity(sdk))) return FREE;
     try {
       // The SDK serves its on-device cache when offline, so a paying user
       // keeps Premium without a connection.
@@ -208,15 +330,17 @@ export const revenueCatPurchaseService: PurchaseService = {
     if (!sdk) return [];
     try {
       const packages = await currentPackages(sdk);
+      const eligible = await introEligibleProductIds(sdk, Object.values(packages).filter((p): p is PurchasesPackage => !!p));
       const offers: PlanOffer[] = [];
       for (const planId of ['monthly', 'yearly', 'lifetime'] as PlanId[]) {
         const pkg = packages[planId];
         if (!pkg) continue;
+        const intro = planId !== 'lifetime' && eligible.has(pkg.product.identifier) ? introOfferFrom(pkg.product.introPrice) : undefined;
         offers.push({
           planId,
           priceString: pkg.product.priceString,
           pricePerMonthString: planId === 'yearly' ? pkg.product.pricePerMonthString ?? undefined : undefined,
-          introOffer: pkg.product.introPrice?.priceString ?? undefined,
+          introOffer: intro,
         });
       }
       return offers;
@@ -229,6 +353,9 @@ export const revenueCatPurchaseService: PurchaseService = {
   async purchase(planId) {
     const sdk = await getSdk();
     if (!sdk) return { ok: false, error: 'unavailable' };
+    // Never buy on behalf of the wrong account: the purchase would be
+    // attributed to whichever identity the SDK is still on.
+    if (!(await ensureIdentity(sdk))) return { ok: false, error: 'network' };
     try {
       const pkg = (await currentPackages(sdk))[planId];
       if (!pkg) {
@@ -242,7 +369,8 @@ export const revenueCatPurchaseService: PurchaseService = {
       // than telling the user they're Premium.
       if (!status.isPremium) {
         reportError(new Error('Purchase completed but premium entitlement not active'), { module: 'RevenueCatPurchaseService', action: 'purchase', planId });
-        return { ok: false, error: 'failed' };
+        // The store took the transaction — don't tell the person it "failed".
+        return { ok: false, error: 'not-activated' };
       }
       return { ok: true, status };
     } catch (e) {
@@ -255,6 +383,8 @@ export const revenueCatPurchaseService: PurchaseService = {
   async restorePurchases() {
     const sdk = await getSdk();
     if (!sdk) return { ok: false, error: 'unavailable' };
+    // Restoring links the store account's purchases to the CURRENT identity.
+    if (!(await ensureIdentity(sdk))) return { ok: false, error: 'network' };
     try {
       return { ok: true, status: statusFromCustomerInfo(await sdk.restorePurchases()) };
     } catch (e) {
@@ -272,4 +402,34 @@ export const revenueCatPurchaseService: PurchaseService = {
       listeners.delete(listener);
     };
   },
+
+  async getManagementUrl() {
+    const sdk = await getSdk();
+    if (!sdk) return null;
+    try {
+      if (!(await identityMatches(sdk))) return null;
+      return (await sdk.getCustomerInfo()).managementURL ?? null;
+    } catch (e) {
+      reportError(e, { module: 'RevenueCatPurchaseService', action: 'getManagementUrl' });
+      return null;
+    }
+  },
+
+  async showManageSubscriptions() {
+    if (Platform.OS !== 'ios') return false;
+    const sdk = await getSdk();
+    if (!sdk) return false;
+    try {
+      await sdk.showManageSubscriptions();
+      return true;
+    } catch (e) {
+      reportError(e, { module: 'RevenueCatPurchaseService', action: 'showManageSubscriptions' });
+      return false;
+    }
+  },
 };
+
+/** For tests: forget the app-requested identity. */
+export function __resetRevenueCatIdentityForTests(): void {
+  desiredUserId = undefined;
+}
