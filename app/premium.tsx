@@ -1,0 +1,306 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PurchaseErrorCode } from '../src/data/purchases';
+import { FREE_RECIPE_LIMIT, PlanId, planIds, premiumFeatures } from '../src/domain/entitlements';
+import { useTranslation } from '../src/i18n/useTranslation';
+import { Button } from '../src/ui/components/Button';
+import { Screen } from '../src/ui/components/Screen';
+import { Text } from '../src/ui/components/Text';
+import { useEntitlementStore } from '../src/state/entitlementStore';
+import { useTheme } from '../src/theme/useTheme';
+
+const featureCopyKeys: Partial<Record<(typeof premiumFeatures)[number], { title: string; body: string }>> = {
+  unlimitedRecipes: { title: 'premium.featureUnlimitedRecipesTitle', body: 'premium.featureUnlimitedRecipesBody' },
+  recipeScaling: { title: 'premium.featureRecipeScalingTitle', body: 'premium.featureRecipeScalingBody' },
+  shoppingList: { title: 'premium.featureShoppingListTitle', body: 'premium.featureShoppingListBody' },
+  tastingJournal: { title: 'premium.featureTastingJournalTitle', body: 'premium.featureTastingJournalBody' },
+};
+
+const planLabelKeys: Record<PlanId, 'premium.planMonthly' | 'premium.planYearly' | 'premium.planLifetime'> = {
+  monthly: 'premium.planMonthly',
+  yearly: 'premium.planYearly',
+  lifetime: 'premium.planLifetime',
+};
+
+export default function PremiumScreen() {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { t } = useTranslation();
+  const isPremium = useEntitlementStore((s) => s.isPremium);
+  const activePlan = useEntitlementStore((s) => s.activePlan);
+  const serviceKind = useEntitlementStore((s) => s.serviceKind);
+  const offers = useEntitlementStore((s) => s.offers);
+  const offersState = useEntitlementStore((s) => s.offersState);
+  const loadOffers = useEntitlementStore((s) => s.loadOffers);
+  const purchase = useEntitlementStore((s) => s.purchase);
+  const restore = useEntitlementStore((s) => s.restore);
+
+  const [selectedPlan, setSelectedPlan] = useState<PlanId>('yearly');
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    loadOffers();
+  }, [loadOffers]);
+
+  // Only plans the STORE actually offers are shown, with the store's own
+  // localized price — never a hardcoded number.
+  const visibleOffers = useMemo(() => offers.filter((o) => planIds.includes(o.planId)), [offers]);
+  const effectiveSelection = visibleOffers.some((o) => o.planId === selectedPlan) ? selectedPlan : visibleOffers[0]?.planId;
+
+  const showPurchaseError = (error: PurchaseErrorCode) => {
+    if (error === 'cancelled') return;
+    if (error === 'pending') {
+      Alert.alert(t('premium.purchasePendingTitle'), t('premium.purchasePendingMessage'));
+      return;
+    }
+    const message =
+      error === 'network'
+        ? t('premium.purchaseNetworkMessage')
+        : error === 'not-allowed'
+          ? t('premium.purchaseNotAllowedMessage')
+          : error === 'already-owned'
+            ? t('premium.alreadyOwnedMessage')
+            : error === 'unavailable'
+              ? t('premium.unavailableMessage')
+              : t('premium.purchaseFailedMessage');
+    Alert.alert(t('premium.purchaseFailedTitle'), message);
+  };
+
+  const runExclusive = async (work: () => Promise<void>) => {
+    if (busyRef.current) return; // one store sheet at a time — no double purchases
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await work();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const handleContinue = () =>
+    runExclusive(async () => {
+      if (!effectiveSelection) return;
+      const result = await purchase(effectiveSelection);
+      if (result.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        Alert.alert(t('premium.purchaseSuccessTitle'));
+        router.back();
+      } else {
+        showPurchaseError(result.error);
+      }
+    });
+
+  const handleRestore = () =>
+    runExclusive(async () => {
+      const result = await restore();
+      if (!result.ok) {
+        if (result.error !== 'cancelled') Alert.alert(t('premium.restoreFailedTitle'), t('premium.restoreFailedMessage'));
+        return;
+      }
+      if (result.status.isPremium) Alert.alert(t('premium.restoreSuccessTitle'));
+      else Alert.alert(t('premium.restoreNothingTitle'), t('premium.restoreNothingMessage'));
+    });
+
+  const openManageSubscription = () => {
+    const url = Platform.OS === 'ios' ? 'https://apps.apple.com/account/subscriptions' : 'https://play.google.com/store/account/subscriptions';
+    Linking.openURL(url).catch(() => undefined);
+  };
+
+  const plansUnavailable = serviceKind === 'unavailable' || (offersState === 'loaded' && visibleOffers.length === 0) || offersState === 'error';
+
+  return (
+    <Screen>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+        <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel={t('common.close')} hitSlop={8}>
+          <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
+        </Pressable>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text variant="display">{t('premium.headline')}</Text>
+        <Text variant="body" color="secondary" style={styles.subheadline}>
+          {t('premium.subheadline')}
+        </Text>
+
+        <View style={styles.featureList}>
+          {premiumFeatures.map((feature) => (
+            <View key={feature} style={styles.featureRow}>
+              <View style={[styles.featureIcon, { backgroundColor: theme.colors.accentSoft }]}>
+                <Ionicons name="checkmark" size={16} color={theme.colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text variant="bodyStrong">{t(featureCopyKeys[feature]!.title as never)}</Text>
+                <Text variant="caption" color="secondary" style={{ marginTop: 2 }}>
+                  {t(featureCopyKeys[feature]!.body as never, { limit: FREE_RECIPE_LIMIT })}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <Text variant="caption" color="tertiary" style={styles.freeNote}>
+          {t('premium.freeTierNote')}
+        </Text>
+
+        {isPremium ? (
+          <>
+            <View style={[styles.currentPlanCard, { backgroundColor: theme.colors.surfaceAlt }]}>
+              <Text variant="captionStrong" color="secondary">
+                {t('premium.currentPlanLabel')}
+              </Text>
+              <Text variant="bodyStrong">{activePlan ? t(planLabelKeys[activePlan]) : t('premium.title')}</Text>
+            </View>
+            {serviceKind === 'store' && activePlan !== 'lifetime' && (
+              <Pressable onPress={openManageSubscription} accessibilityRole="link" style={styles.restoreRow} hitSlop={8}>
+                <Text variant="captionStrong" color="accent">
+                  {t('premium.manageSubscription')}
+                </Text>
+              </Pressable>
+            )}
+          </>
+        ) : (
+          <>
+            <Text variant="headline" style={styles.chooseTitle}>
+              {t('premium.choosePlan')}
+            </Text>
+            {offersState === 'loading' || (offersState === 'idle' && serviceKind !== 'unavailable') ? (
+              <View style={styles.stateBox}>
+                <ActivityIndicator color={theme.colors.textSecondary} />
+                <Text variant="caption" color="secondary">
+                  {t('premium.loadingPlans')}
+                </Text>
+              </View>
+            ) : plansUnavailable ? (
+              <View style={[styles.stateBox, { backgroundColor: theme.colors.surfaceAlt }]}>
+                <Text variant="bodyStrong" style={{ textAlign: 'center' }}>
+                  {t('premium.unavailableTitle')}
+                </Text>
+                <Text variant="caption" color="secondary" style={{ textAlign: 'center' }}>
+                  {t('premium.unavailableMessage')}
+                </Text>
+                {serviceKind !== 'unavailable' && (
+                  <Button label={t('premium.retryLoadPlans')} variant="secondary" onPress={loadOffers} style={{ marginTop: 8 }} />
+                )}
+              </View>
+            ) : (
+              <>
+                <View style={styles.planRow}>
+                  {visibleOffers.map((offer) => {
+                    const selected = effectiveSelection === offer.planId;
+                    return (
+                      <Pressable
+                        key={offer.planId}
+                        onPress={() => setSelectedPlan(offer.planId)}
+                        style={[
+                          styles.planCard,
+                          {
+                            backgroundColor: selected ? theme.colors.accentSoft : theme.colors.surfaceAlt,
+                            borderColor: selected ? theme.colors.accent : theme.colors.border,
+                          },
+                        ]}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`${t(planLabelKeys[offer.planId])} ${offer.priceString}`}
+                        accessibilityState={{ selected }}
+                      >
+                        <Text variant="captionStrong" color={selected ? 'accent' : 'primary'}>
+                          {t(planLabelKeys[offer.planId])}
+                        </Text>
+                        <Text variant="bodyStrong" style={{ marginTop: 4 }}>
+                          {offer.priceString}
+                        </Text>
+                        {offer.pricePerMonthString ? (
+                          <Text variant="label" color="secondary" style={{ marginTop: 2 }}>
+                            {t('premium.perMonthStore', { price: offer.pricePerMonthString })}
+                          </Text>
+                        ) : null}
+                        {offer.introOffer ? (
+                          <Text variant="label" color="accent" style={{ marginTop: 2, textAlign: 'center' }}>
+                            {t('premium.introOfferLabel', { offer: offer.introOffer })}
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Button
+                  label={busy ? t('common.loading') : t('premium.continueAction')}
+                  onPress={handleContinue}
+                  disabled={busy || !effectiveSelection}
+                  style={styles.continueButton}
+                />
+                <Text variant="caption" color="tertiary" style={styles.priceNote}>
+                  {Platform.OS === 'ios' ? t('premium.subscriptionTermsIos') : t('premium.subscriptionTermsAndroid')}
+                </Text>
+              </>
+            )}
+          </>
+        )}
+
+        {serviceKind !== 'unavailable' && (
+          <Pressable
+            onPress={handleRestore}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={t('premium.restorePurchases')}
+            style={styles.restoreRow}
+            hitSlop={8}
+          >
+            <Text variant="captionStrong" color="accent">
+              {t('premium.restorePurchases')}
+            </Text>
+          </Pressable>
+        )}
+
+        <View style={styles.legalRow}>
+          <Pressable onPress={() => router.push('/legal/terms')} accessibilityRole="link" hitSlop={8}>
+            <Text variant="caption" color="accent">
+              {t('premium.termsLink')}
+            </Text>
+          </Pressable>
+          <Text variant="caption" color="tertiary">
+            {' · '}
+          </Text>
+          <Pressable onPress={() => router.push('/legal/privacy')} accessibilityRole="link" hitSlop={8}>
+            <Text variant="caption" color="accent">
+              {t('premium.privacyLink')}
+            </Text>
+          </Pressable>
+        </View>
+
+        {serviceKind === 'development' && (
+          <Text variant="caption" color="tertiary" style={styles.devNote}>
+            {t('premium.devBuildNote')}
+          </Text>
+        )}
+      </ScrollView>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  header: { paddingHorizontal: 20, paddingBottom: 8 },
+  content: { paddingHorizontal: 20, paddingBottom: 48, gap: 4 },
+  subheadline: { marginTop: 8, lineHeight: 21 },
+  featureList: { marginTop: 24, gap: 16 },
+  featureRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  featureIcon: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  freeNote: { marginTop: 20, lineHeight: 18 },
+  currentPlanCard: { marginTop: 24, borderRadius: 14, padding: 16, gap: 4 },
+  chooseTitle: { marginTop: 28, marginBottom: 12 },
+  planRow: { flexDirection: 'row', gap: 10 },
+  planCard: { flex: 1, minHeight: 88, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 14, alignItems: 'center', position: 'relative' },
+  saveBadge: { position: 'absolute', top: -9, alignSelf: 'center', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  priceNote: { marginTop: 12, textAlign: 'center', lineHeight: 17 },
+  stateBox: { borderRadius: 14, padding: 16, gap: 8, alignItems: 'center' },
+  continueButton: { marginTop: 16 },
+  restoreRow: { alignItems: 'center', marginTop: 20, minHeight: 32, justifyContent: 'center' },
+  legalRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 12 },
+  devNote: { textAlign: 'center', marginTop: 20, lineHeight: 17 },
+});

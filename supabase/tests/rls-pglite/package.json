@@ -1,0 +1,8 @@
+{
+  "name": "cellar-rls-pglite",
+  "private": true,
+  "type": "module",
+  "description": "Offline RLS/constraint regression harness: applies supabase/migrations to an embedded Postgres (PGlite) with minimal auth/storage stubs and runs adversarial checks. Complements — does not replace — live verification against the real project.",
+  "scripts": { "test": "node security.mjs" },
+  "dependencies": { "@electric-sql/pglite": "^0.5.8" }
+}
