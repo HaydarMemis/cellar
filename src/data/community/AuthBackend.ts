@@ -8,6 +8,12 @@ export interface SignUpInput {
   displayName: string;
   email: string;
   password: string;
+  /**
+   * The app language at sign-up ('en' | 'tr'). Stored on the auth user so
+   * Supabase's email templates (supabase/templates/*.html) can send the
+   * confirmation / reset emails in the person's language.
+   */
+  locale?: string;
 }
 
 export interface LogInInput {

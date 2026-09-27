@@ -69,6 +69,9 @@ Bundle id / package is `com.ecclesia.coctail`. Decide it is final **before** the
 7. Run `supabase db push` and the two `functions deploy` commands (§1).
 8. Moderation: reports land in `public.reports` (index on `status, created_at`). Assign someone to review open reports in the dashboard at least daily; the Community Guidelines state a 24-hour review target.
 
+### Auth emails
+- Templates: `supabase/templates/confirmation.html`, `recovery.html`, `email_change.html` (EN/TR, chosen from `user_metadata.locale`). Paste each into **Authentication → Emails** (Confirm signup, Reset password, Change email address) with the subjects from `supabase/config.toml` (`[auth.email.template.*]`).
+
 ### Apple Developer / App Store Connect
 1. Identifiers → `com.ecclesia.coctail`: enable **Sign in with Apple**. Keys → create a key with Sign in with Apple enabled (used for the revocation secrets above).
 2. App Store Connect → new app with that bundle id.

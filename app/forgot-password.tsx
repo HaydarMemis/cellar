@@ -31,23 +31,36 @@ export default function ForgotPasswordScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
   const [notAvailable, setNotAvailable] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
   const canSubmit = email.trim().length > 0 && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
+    setRequestError(null);
     const result = await requestPasswordReset(email.trim());
     setSubmitting(false);
     if (!result.ok && result.error === 'not-supported-offline') {
       setNotAvailable(true);
       return;
     }
-    // Every other outcome — including a real failure like a rate limit —
-    // still shows the same "check your email" state. A user who mistyped
-    // their email, or whose email isn't registered, gets no signal that
-    // distinguishes their case from a real send; that's deliberate
-    // anti-enumeration behavior, not a bug swallowing the error.
+    // A request that never went out (no connection, or the per-address
+    // email rate limit) is said so honestly — pretending an email was sent
+    // would leave the person waiting for nothing. Neither case depends on
+    // whether an account exists, so this reveals nothing about which
+    // addresses are registered.
+    if (!result.ok && result.error === 'network-error') {
+      setRequestError(t('auth.errorNetworkError'));
+      return;
+    }
+    if (!result.ok && result.error === 'rate-limited') {
+      setRequestError(t('auth.forgotPasswordRateLimited'));
+      return;
+    }
+    // Every other outcome shows the same "if an account exists…" state: a
+    // mistyped or unregistered address gets no distinguishing signal
+    // (deliberate anti-enumeration behavior).
     setSent(true);
   };
 
@@ -99,6 +112,12 @@ export default function ForgotPasswordScreen() {
             returnKeyType="send"
             onSubmitEditing={handleSubmit}
           />
+
+          {requestError ? (
+            <Text variant="caption" color="secondary" style={{ color: theme.colors.danger }}>
+              {requestError}
+            </Text>
+          ) : null}
 
           {notAvailable ? (
             <Text variant="caption" color="secondary" style={{ color: theme.colors.danger }}>

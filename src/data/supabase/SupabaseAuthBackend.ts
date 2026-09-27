@@ -336,7 +336,7 @@ export const supabaseAuthBackend: AuthBackend = {
     return data.map(toProfile);
   },
 
-  async signUp({ username, displayName, email, password }: SignUpInput): Promise<SignUpOutcome> {
+  async signUp({ username, displayName, email, password, locale }: SignUpInput): Promise<SignUpOutcome> {
     const normalizedUsername = username.trim().toLowerCase();
     const normalizedEmail = email.trim().toLowerCase();
     if (!USERNAME_PATTERN.test(normalizedUsername)) return { ok: false, error: 'invalid-username' };
@@ -360,7 +360,7 @@ export const supabaseAuthBackend: AuthBackend = {
         // first sign-in when email confirmation is on (see below) — without
         // this the chosen username was simply lost and logIn fell back to
         // the email's local-part.
-        data: { username: normalizedUsername, display_name: displayNameValue },
+        data: { username: normalizedUsername, display_name: displayNameValue, ...(locale === 'tr' || locale === 'en' ? { locale } : {}) },
         emailRedirectTo: emailConfirmationRedirectUrl(),
       },
     });
@@ -371,12 +371,15 @@ export const supabaseAuthBackend: AuthBackend = {
     if (!data.user) return { ok: false, error: 'unknown' };
 
     // With email confirmation on, Supabase answers a sign-up for an
-    // already-registered email with a user object that has NO identities
-    // (and sends no email) instead of an error — its documented
-    // anti-enumeration behavior. Treat that as the duplicate it is rather
-    // than telling the person to go check an inbox that will stay empty.
+    // already-registered email with an obfuscated user that has NO
+    // identities (and sends no email) instead of an error — its documented
+    // anti-enumeration behavior. Keep that property: answer exactly like a
+    // fresh sign-up, so this screen can't be used to probe which email
+    // addresses have Cellar accounts. The "check your email" screen tells
+    // people who already have an account to sign in or reset their
+    // password instead.
     if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-      return { ok: false, error: 'email-taken' };
+      return { ok: 'pending-confirmation', email: normalizedEmail };
     }
 
     // The one signal Supabase actually gives for "this project requires

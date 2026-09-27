@@ -108,7 +108,7 @@ export default function ProfileScreen() {
               </Text>
               <View style={styles.authButtonRow}>
                 <Button label={t('profile.signIn')} variant="secondary" onPress={() => router.push('/auth')} style={{ flex: 1 }} />
-                <Button label={t('profile.createAccount')} onPress={() => router.push('/auth')} style={{ flex: 1 }} />
+                <Button label={t('profile.createAccount')} onPress={() => router.push('/auth?mode=signUp')} style={{ flex: 1 }} />
               </View>
             </View>
           )}

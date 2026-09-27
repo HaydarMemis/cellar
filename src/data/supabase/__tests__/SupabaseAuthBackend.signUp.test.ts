@@ -57,9 +57,15 @@ it('stores the chosen username/display name on the auth user and sets the confir
   expect(arg.options.emailRedirectTo).toBe('cellar://auth-callback');
 });
 
-it('an already-registered email (no identities, Supabase anti-enumeration response) is reported as email-taken', async () => {
+// Behavior change (authentication phase): this used to report 'email-taken',
+// which let anyone probe which addresses have Cellar accounts — exactly
+// what Supabase's obfuscated no-identities response is designed to
+// prevent. It now answers like any sign-up; the "check your email" screen
+// tells existing users to sign in or reset their password instead.
+it('an already-registered email (no identities, Supabase anti-enumeration response) answers like a new sign-up', async () => {
   mockSignUp.mockResolvedValue({ data: { user: { id: 'u1', identities: [] }, session: null }, error: null });
-  expect(await supabaseAuthBackend.signUp(input)).toEqual({ ok: false, error: 'email-taken' });
+  expect(await supabaseAuthBackend.signUp(input)).toEqual({ ok: 'pending-confirmation', email: 'alice@example.com' });
+  expect(mockUpserts).toHaveLength(0);
 });
 
 it('with a session (confirmation off), creates the profile', async () => {

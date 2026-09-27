@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,12 +40,16 @@ export default function AuthScreen() {
   const logIn = useAuthStore((s) => s.logIn);
   const resendConfirmationEmail = useAuthStore((s) => s.resendConfirmationEmail);
 
-  const [mode, setMode] = useState<Mode>('signIn');
+  // `/auth?mode=signUp` opens straight on account creation (Profile's
+  // "Create account"); everything else starts on sign-in.
+  const params = useLocalSearchParams<{ mode?: string }>();
+  const [mode, setMode] = useState<Mode>(params.mode === 'signUp' ? 'signUp' : 'signIn');
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -53,7 +58,7 @@ export default function AuthScreen() {
   const canSubmit =
     email.trim().length > 0 &&
     password.length > 0 &&
-    (mode === 'signIn' || (username.trim().length > 0 && displayName.trim().length > 0)) &&
+    (mode === 'signIn' || (username.trim().length > 0 && displayName.trim().length > 0 && confirmPassword.length > 0)) &&
     !submitting;
 
   // Only providers that are actually configured for this build get a
@@ -100,6 +105,10 @@ export default function AuthScreen() {
     // Ref, not just `submitting` state: two taps in one frame both see the
     // old state and would create/sign in twice.
     if (submittingRef.current) return;
+    if (mode === 'signUp' && password !== confirmPassword) {
+      setError(t('auth.errorPasswordMismatch'));
+      return;
+    }
     submittingRef.current = true;
     setError(null);
     setSubmitting(true);
@@ -184,6 +193,9 @@ export default function AuthScreen() {
           <Text variant="body" color="secondary" style={styles.pendingMessage}>
             {t('auth.pendingConfirmationMessage', { email: pendingEmail })}
           </Text>
+          <Text variant="caption" color="tertiary" style={styles.pendingMessage}>
+            {t('auth.pendingConfirmationHint')}
+          </Text>
           <Button
             label={resending ? t('common.saving') : t('auth.resendConfirmationAction')}
             variant="secondary"
@@ -213,25 +225,34 @@ export default function AuthScreen() {
           <>
         <View style={styles.socialColumn}>
           {available.apple && (
-            <Pressable
-              onPress={() => handleSocialSignIn('apple')}
-              disabled={submitting}
-              accessibilityLabel={t('auth.continueWithApple')}
-              accessibilityRole="button"
-              style={[styles.socialButton, { backgroundColor: theme.scheme === 'dark' ? '#FFFFFF' : '#000000' }]}
-            >
-              <Ionicons name="logo-apple" size={18} color={theme.scheme === 'dark' ? '#000000' : '#FFFFFF'} />
-              <Text variant="bodyStrong" style={{ color: theme.scheme === 'dark' ? '#000000' : '#FFFFFF' }}>
-                {t('auth.continueWithApple')}
-              </Text>
-            </Pressable>
+            // Apple's own button (App Store Review Guideline 4.8 / Human
+            // Interface Guidelines): system-drawn label, logo and localization.
+            <View pointerEvents={submitting ? 'none' : 'auto'} style={{ opacity: submitting ? 0.5 : 1 }}>
+              <AppleAuthentication.AppleAuthenticationButton
+                key={`${mode}-${theme.scheme}`}
+                buttonType={
+                  mode === 'signUp'
+                    ? AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP
+                    : AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
+                }
+                buttonStyle={
+                  theme.scheme === 'dark'
+                    ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                    : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                }
+                cornerRadius={12}
+                style={styles.appleButton}
+                onPress={() => handleSocialSignIn('apple')}
+              />
+            </View>
           )}
           {available.google && (
           <Pressable
             onPress={() => handleSocialSignIn('google')}
             disabled={submitting}
             accessibilityRole="button"
-            style={[styles.socialButton, { backgroundColor: theme.colors.surfaceAlt, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border }]}
+            accessibilityLabel={t('auth.continueWithGoogle')}
+            style={[styles.socialButton, { opacity: submitting ? 0.5 : 1, backgroundColor: theme.colors.surfaceAlt, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border }]}
           >
             <Ionicons name="logo-google" size={18} color={theme.colors.textPrimary} />
             <Text variant="bodyStrong">{t('auth.continueWithGoogle')}</Text>
@@ -271,6 +292,7 @@ export default function AuthScreen() {
           autoCapitalize="none"
           keyboardType="email-address"
           autoComplete="email"
+          textContentType="emailAddress"
         />
 
         <FormField
@@ -280,7 +302,22 @@ export default function AuthScreen() {
           placeholder={t('auth.passwordPlaceholder')}
           secureTextEntry
           autoCapitalize="none"
+          autoComplete={mode === 'signUp' ? 'new-password' : 'current-password'}
+          textContentType={mode === 'signUp' ? 'newPassword' : 'password'}
         />
+
+        {mode === 'signUp' && (
+          <FormField
+            label={t('auth.confirmPasswordLabel')}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            placeholder={t('auth.confirmPasswordPlaceholder')}
+            secureTextEntry
+            autoCapitalize="none"
+            autoComplete="new-password"
+            textContentType="newPassword"
+          />
+        )}
 
         {mode === 'signIn' && isSupabaseConfigured && (
           <Pressable
@@ -325,6 +362,7 @@ export default function AuthScreen() {
         <Pressable
           onPress={() => {
             setError(null);
+            setConfirmPassword('');
             setMode(mode === 'signIn' ? 'signUp' : 'signIn');
           }}
           accessibilityRole="button"
@@ -357,6 +395,7 @@ const styles = StyleSheet.create({
   legalNote: { textAlign: 'center', lineHeight: 16 },
   legalLinks: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 14 },
   socialColumn: { gap: 10 },
+  appleButton: { width: '100%', height: 48 },
   socialButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, minHeight: 48, borderRadius: 12 },
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },

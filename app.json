@@ -12,8 +12,10 @@
       "bundleIdentifier": "com.ecclesia.coctail",
       "usesAppleSignIn": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleAllowMixedLocalizations": true
+      },
+      "appleTeamId": "7F4FH57W7H"
     },
     "android": {
       "package": "com.ecclesia.coctail",

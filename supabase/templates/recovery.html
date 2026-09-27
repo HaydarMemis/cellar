@@ -1,0 +1,27 @@
+<!-- Cellar auth email. Language follows the locale saved on the account at
+     sign-up (user_metadata.locale, set by the app); anything else gets English.
+     Paste into Supabase → Authentication → Emails, or push with
+     `supabase config push` (see [auth.email.template.*] in config.toml). -->
+<div style="background:#FAF8F5;padding:24px 12px;">
+{{ if eq (printf "%v" .Data.locale) "tr" }}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;" lang="tr">
+    <tr><td style="padding:32px 28px 8px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1C1917;">
+      <p style="margin:0 0 20px 0;font-size:15px;letter-spacing:2px;font-weight:600;color:#3B2110;">CELLAR</p>
+      <h1 style="margin:0 0 12px 0;font-size:20px;line-height:28px;font-weight:600;">Şifreni sıfırla</h1>
+      <p style="margin:0 0 24px 0;font-size:15px;line-height:22px;color:#44403C;">{{ .Email }} Cellar hesabının şifresini sıfırlama isteği aldık. Yeni bir şifre belirlemek için aşağıdaki düğmeye telefonundan dokun.</p>
+      <p style="margin:0 0 24px 0;"><a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#3B2110;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:600;padding:12px 22px;border-radius:10px;">Yeni şifre belirle</a></p>
+      <p style="margin:0 0 28px 0;font-size:13px;line-height:19px;color:#78716C;">Bu isteği sen yapmadıysan bu e-postayı yok say — şifren değişmez. Bağlantı yalnızca bir kez kullanılabilir ve kısa bir süre sonra geçersiz olur.</p>
+    </td></tr>
+  </table>
+{{ else }}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;" lang="en">
+    <tr><td style="padding:32px 28px 8px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1C1917;">
+      <p style="margin:0 0 20px 0;font-size:15px;letter-spacing:2px;font-weight:600;color:#3B2110;">CELLAR</p>
+      <h1 style="margin:0 0 12px 0;font-size:20px;line-height:28px;font-weight:600;">Reset your password</h1>
+      <p style="margin:0 0 24px 0;font-size:15px;line-height:22px;color:#44403C;">Someone asked to reset the password for the Cellar account {{ .Email }}. Tap the button below on your phone to choose a new password.</p>
+      <p style="margin:0 0 24px 0;"><a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#3B2110;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:600;padding:12px 22px;border-radius:10px;">Choose a new password</a></p>
+      <p style="margin:0 0 28px 0;font-size:13px;line-height:19px;color:#78716C;">If you didn’t ask for this, ignore this email — your password stays the same. The link works only once and expires after a short time.</p>
+    </td></tr>
+  </table>
+{{ end }}
+</div>

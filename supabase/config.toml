@@ -255,6 +255,22 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# Cellar's auth emails (bilingual EN/TR — each template picks the language
+# from user_metadata.locale, which the app stores at sign-up). The same HTML
+# can be pasted into Dashboard → Authentication → Emails; subjects are
+# bilingual because GoTrue doesn't template the subject line per user.
+[auth.email.template.confirmation]
+subject = "Confirm your Cellar account · Cellar hesabını onayla"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Cellar password · Cellar şifreni sıfırla"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new email · Yeni e-posta adresini onayla"
+content_path = "./supabase/templates/email_change.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true
@@ -327,6 +343,11 @@ max_frequency = "5s"
 # enroll_enabled = true
 # verify_enabled = true
 
+# WARNING — hosted project: the provider blocks below describe the LOCAL dev
+# stack only. Cellar's Apple/Google providers are configured in the
+# Supabase dashboard (RELEASE_CHECKLIST.md). Don't run `supabase config push`
+# against the hosted project without first making these blocks match the
+# dashboard, or it would switch Sign in with Apple off there.
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.

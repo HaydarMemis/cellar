@@ -19,6 +19,7 @@ import { reportError, setCrashReportingUser } from '../lib/crashReporting';
 import { clearAccountScopedLocalData, reloadAccountScopedLocalData } from './accountScope';
 import { useCommunityStore } from './communityStore';
 import { useEntitlementStore } from './entitlementStore';
+import { useLocaleStore } from './localeStore';
 import { useModerationStore } from './moderationStore';
 
 /**
@@ -386,7 +387,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signUp: (input) =>
     inIdentityTransition(async () => {
-      const result = await authBackend.signUp(input);
+      // The app language travels with the sign-up so the confirmation
+      // email (and later reset emails) can be sent in it.
+      const result = await authBackend.signUp({ ...input, locale: input.locale ?? useLocaleStore.getState().locale });
       if (result.ok === 'pending-confirmation') return result;
       if (!result.ok) return result;
       await adoptProfile(result.profile);

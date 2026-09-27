@@ -130,11 +130,11 @@ src/domain (pure logic: matching, search, substitutions, scaling, UUIDs, …)
 
 | Flow | Implementation |
 |---|---|
-| Email/password sign-up | Supabase Auth. The username and display name are stored in the user's metadata, and the profile row is created on first sign-in. Row Level Security prevents creating it while the email is still unconfirmed. |
-| Email confirmation | The confirmation link opens `cellar://auth-callback`, which establishes the session. Unconfirmed sign-ins go to a "check your inbox / resend" screen. |
+| Email/password sign-up | Supabase Auth, with password confirmation. An address that already has an account gets the same "check your email" answer as a new one (no account enumeration). The username and display name are stored in the user's metadata, and the profile row is created on first sign-in. Row Level Security prevents creating it while the email is still unconfirmed. |
+| Email confirmation | The confirmation link opens `cellar://auth-callback`, which establishes the session. Unconfirmed sign-ins go to a "check your inbox / resend" screen. Auth emails use the bilingual templates in `supabase/templates/` (language from the account's saved app locale). |
 | Password reset | Recovery link → `cellar://reset-password` → set a new password. The app switches to the account from the link. |
 | Change password | Account & Security screen. Supabase's "reauthentication needed", weak-password and same-password errors get specific messages. |
-| Sign in with Apple | Native Apple sheet with a SHA-256 nonce → `signInWithIdToken`. The button appears only when `EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED=true`. |
+| Sign in with Apple | Apple's own `AppleAuthenticationButton`, native Apple sheet with a SHA-256 nonce → `signInWithIdToken`. The button appears only when `EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED=true`. |
 | Google Sign-In | Native Google SDK → ID token → `signInWithIdToken`. The button appears only when the Google client ids are configured. |
 | Account deletion | `delete-account` Edge Function (see below). Accounts that use Apple re-confirm with Apple so the grant can be revoked. |
 | Existing accounts | Duplicate email and username are detected. First-time social sign-in creates a profile with a collision-safe username. |
