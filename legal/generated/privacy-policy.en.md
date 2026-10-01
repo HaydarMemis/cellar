@@ -12,7 +12,7 @@ Browsing the catalog, search, filters, ingredient matching, favorites, My Bar, t
 
 Creating an account or publishing a recipe sends the following to our infrastructure provider, Supabase:
 
-- Account: your email address, username, display name and optional bio.
+- Account: your email address, username, display name, optional bio and optional profile photo.
 - Authentication: if you sign up with a password, Supabase stores a securely hashed credential — we never see your raw password. If you sign in with Apple or Google, we receive the provider’s verified user ID and the name/email you choose to share (including an Apple “Hide My Email” relay address).
 - Published (public) recipes: name, description, ingredients, method, steps and any photo you attach — visible to everyone using the app.
 - Social activity: who you follow, who follows you, the recipes you like, and the users you block (your block list is visible only to you).
@@ -22,6 +22,8 @@ Creating an account or publishing a recipe sends the following to our infrastruc
 ## Photos
 
 When you add a photo to a recipe, the system photo picker is used — the app only receives the photo you select, not your photo library. The photo is resized and saved on your device. A photo on a private recipe stays on your device; a photo on a recipe you publish is uploaded to our storage so other users can see it.
+
+You can optionally add a profile photo. It is chosen the same way with the system photo picker, resized and re-encoded on your device (which also removes embedded metadata such as location), and uploaded to our storage. Your profile photo is visible to everyone using the app, together with your display name and username. You can change or remove it at any time under Profile → Edit profile.
 
 ## Crash reports
 
@@ -44,7 +46,7 @@ Cellar shows no ads, uses no third-party analytics or tracking tools, and does n
 
 ## Retention and account deletion
 
-Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile, published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. We also ask RevenueCat to delete the purchase-status record linked to your account; the store’s own purchase history stays with Apple / Google. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.
+Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile (including your profile photo), published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. We also ask RevenueCat to delete the purchase-status record linked to your account; the store’s own purchase history stays with Apple / Google. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.
 
 ## Age
 

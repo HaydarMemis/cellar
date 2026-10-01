@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Redirect, Stack } from 'expo-router';
+import { Redirect, Stack, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Alert, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { initCrashReporting, reportError } from '../src/lib/crashReporting';
+import { formatCrash, installCrashRecorder, setDiagnosticsRoute, takeUnshownCrash } from '../src/lib/deviceDiagnostics';
 import { ErrorBoundary } from '../src/ui/components/ErrorBoundary';
 import { BackgroundSync } from '../src/ui/components/BackgroundSync';
 import { LocalDataAdoptionPrompt } from '../src/ui/components/LocalDataAdoptionPrompt';
@@ -15,10 +16,25 @@ import { useOnboardingStore } from '../src/state/onboardingStore';
 import { useTheme } from '../src/theme/useTheme';
 
 initCrashReporting();
+// TEMPORARY device diagnostics (see src/lib/deviceDiagnostics.ts): records a
+// crash's error + route to a local file before the app's normal crash handling.
+installCrashRecorder();
 
 function RootNavigator() {
   const theme = useTheme();
   const hasCompletedOnboarding = useOnboardingStore((s) => s.hasCompletedOnboarding);
+
+  // TEMPORARY device diagnostics: route PATTERN only ("cocktail/[id]"), never params.
+  const segments = useSegments();
+  const routePattern = segments.join('/');
+  useEffect(() => {
+    setDiagnosticsRoute(`/${routePattern}`);
+  }, [routePattern]);
+  // TEMPORARY: show the previous session's crash once, so it can be reported.
+  useEffect(() => {
+    const crash = takeUnshownCrash();
+    if (crash) Alert.alert('Cellar diagnostics — previous crash', formatCrash(crash));
+  }, []);
 
   return (
     <>

@@ -14,6 +14,7 @@ import { Chip } from '../../src/ui/components/Chip';
 import { DrinkCard } from '../../src/ui/components/DrinkCard';
 import { EmptyState } from '../../src/ui/components/EmptyState';
 import { Screen } from '../../src/ui/components/Screen';
+import { NotFoundState } from '../../src/ui/components/NotFoundState';
 import { SearchBar } from '../../src/ui/components/SearchBar';
 import { Text } from '../../src/ui/components/Text';
 import { useFavoritesStore } from '../../src/state/favoritesStore';
@@ -44,13 +45,7 @@ export default function CollectionDetailScreen() {
   const sorted = useMemo(() => sortCocktails(filtered, sortKey), [filtered, sortKey]);
 
   if (!collection) {
-    return (
-      <Screen>
-        <View style={[styles.notFound, { paddingTop: insets.top + 40 }]}>
-          <Text variant="headline">{t('cocktailDetail.notFound')}</Text>
-        </View>
-      </Screen>
-    );
+    return <NotFoundState message={t('cocktailDetail.notFound')} />;
   }
 
   const title = getCollectionTitle(collection, t, tVocab);

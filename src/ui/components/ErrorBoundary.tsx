@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { reportError } from '../../lib/crashReporting';
+import { recordCrash } from '../../lib/deviceDiagnostics';
 import { uiDictionaries } from '../../i18n/dictionaries';
 import { translateFrom } from '../../i18n/translate';
 import { useLocaleStore } from '../../state/localeStore';
@@ -57,6 +58,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    recordCrash(error, false, 'boundary'); // TEMPORARY device diagnostics
     reportError(error, { boundary: this.props.boundaryName ?? 'unnamed', componentStack: info.componentStack ?? undefined });
   }
 

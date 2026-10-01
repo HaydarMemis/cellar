@@ -1,8 +1,11 @@
 import {
+  AVATAR_JPEG_QUALITY,
+  AVATAR_MAX_EDGE,
   deleteManagedLocalPhoto,
   isManagedLocalPhoto,
   managedPhotoFileName,
   PhotoProcessingError,
+  prepareAvatarPhoto,
   prepareRecipePhoto,
   resolveLocalPhotoUri,
 } from '../localMedia';
@@ -224,5 +227,36 @@ describe('isRecipeMediaUrlFor', () => {
     expect(isRecipeMediaUrlFor(url, 'owner-1', 'recipe-2', 'photo')).toBe(false);
     expect(isRecipeMediaUrlFor(url, 'owner-1', 'recipe-1', 'video')).toBe(false);
     expect(isRecipeMediaUrlFor('https://cdn/photo?v=1', 'owner-1', 'recipe-1', 'photo')).toBe(false);
+  });
+});
+
+describe('prepareAvatarPhoto', () => {
+  it('resizes to a 512 px longest edge and re-encodes as JPEG 0.8; returns the processed file, nothing persisted', async () => {
+    const resize = jest.fn();
+    const saveAsync = jest.fn(async () => ({ uri: 'file:///cache/avatar-processed.jpg' }));
+    mockManipulate.mockReturnValue({ resize, renderAsync: async () => ({ saveAsync }) });
+
+    const uri = await prepareAvatarPhoto({ uri: 'file:///cache/picked.heic', width: 3024, height: 4032 });
+
+    expect(AVATAR_MAX_EDGE).toBe(512);
+    expect(mockManipulate).toHaveBeenCalledWith('file:///cache/picked.heic');
+    expect(resize).toHaveBeenCalledWith({ height: 512 });
+    expect(saveAsync).toHaveBeenCalledWith({ compress: AVATAR_JPEG_QUALITY, format: 'jpeg' });
+    expect(uri).toBe('file:///cache/avatar-processed.jpg');
+    expect(mockFs.copies).toEqual([]);
+  });
+
+  it('never upscales a small photo', async () => {
+    const resize = jest.fn();
+    mockManipulate.mockReturnValue({ resize, renderAsync: async () => ({ saveAsync: async () => ({ uri: 'file:///cache/p.jpg' }) }) });
+    await prepareAvatarPhoto({ uri: 'file:///cache/small.jpg', width: 300, height: 200 });
+    expect(resize).not.toHaveBeenCalled();
+  });
+
+  it('processing failure throws PhotoProcessingError — the original is never returned', async () => {
+    mockManipulate.mockImplementation(() => {
+      throw new Error('decode failed');
+    });
+    await expect(prepareAvatarPhoto({ uri: 'file:///cache/picked.heic' })).rejects.toBeInstanceOf(PhotoProcessingError);
   });
 });

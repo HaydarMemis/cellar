@@ -4,9 +4,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isSupabaseConfigured } from '../src/data/supabase/client';
+import { isSupabaseConfigured, supabaseKeyKind } from '../src/data/supabase/client';
+import { AUTH_DIAGNOSTICS_ENABLED, INVALID_SUPABASE_KEY_REFERENCE, takeAuthDiagnostic, takeErrorDetailLine } from '../src/lib/authDiagnostics';
 import { accountsAvailable, AuthErrorCode, socialAuthProvider } from '../src/data/community';
 import { useTranslation } from '../src/i18n/useTranslation';
+import { RESEND_COOLDOWN_MS, resendFeedback, resendSecondsLeft } from '../src/ui/auth/resendConfirmation';
 import { Button } from '../src/ui/components/Button';
 import { FormField } from '../src/ui/components/FormField';
 import { Screen } from '../src/ui/components/Screen';
@@ -26,10 +28,28 @@ const errorKeys: Record<AuthErrorCode, string> = {
   'email-not-confirmed': 'errorEmailNotConfirmed',
   'rate-limited': 'errorRateLimited',
   'network-error': 'errorNetworkError',
+  'email-send-failed': 'errorEmailSendFailed',
   unknown: 'errorUnknown',
 };
 
 type Mode = 'signIn' | 'signUp' | 'pendingConfirmation';
+
+/**
+ * Appends the failure's error reference (every build) or, in a TEMPORARY
+ * diagnostics build (src/lib/authDiagnostics.ts), the full sanitized
+ * provider error to a user-facing message.
+ */
+function withDiagnostic(message: string, t: (key: 'common.errorReference', options: { code: string }) => string): string {
+  // Shown in EVERY build: with a malformed key every Supabase request is a 401 "Invalid API key".
+  const config =
+    supabaseKeyKind !== 'invalid'
+      ? null
+      : AUTH_DIAGNOSTICS_ENABLED
+        ? '[diag] config · EXPO_PUBLIC_SUPABASE_ANON_KEY is not a valid Supabase key format'
+        : t('common.errorReference', { code: INVALID_SUPABASE_KEY_REFERENCE });
+  const detail = takeErrorDetailLine((code) => t('common.errorReference', { code }));
+  return [message, config, detail].filter(Boolean).join('\n\n');
+}
 
 export default function AuthScreen() {
   const theme = useTheme();
@@ -54,6 +74,15 @@ export default function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [resending, setResending] = useState(false);
+  // When the next confirmation email may be requested (see resendConfirmation.ts).
+  const [resendAvailableAt, setResendAvailableAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const resendWait = resendSecondsLeft(resendAvailableAt, now);
+  useEffect(() => {
+    if (resendWait <= 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [resendWait]);
 
   const canSubmit =
     email.trim().length > 0 &&
@@ -79,6 +108,7 @@ export default function AuthScreen() {
 
   const handleSocialSignIn = async (method: 'apple' | 'google') => {
     if (submittingRef.current) return;
+    takeAuthDiagnostic(); // only this attempt's failure may be referenced
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -92,7 +122,7 @@ export default function AuthScreen() {
         Alert.alert(t('auth.socialNotConfiguredTitle'), t(method === 'apple' ? 'auth.socialNotConfiguredAppleMessage' : 'auth.socialNotConfiguredGoogleMessage'));
         return;
       }
-      Alert.alert(t('auth.socialFailedTitle'), t(result.error === 'network' ? 'auth.errorNetworkError' : 'auth.socialFailedMessage'));
+      Alert.alert(t('auth.socialFailedTitle'), withDiagnostic(t(result.error === 'network' ? 'auth.errorNetworkError' : 'auth.socialFailedMessage'), t));
     } catch {
       Alert.alert(t('auth.socialFailedTitle'), t('auth.socialFailedMessage'));
     } finally {
@@ -105,6 +135,7 @@ export default function AuthScreen() {
     // Ref, not just `submitting` state: two taps in one frame both see the
     // old state and would create/sign in twice.
     if (submittingRef.current) return;
+    takeAuthDiagnostic(); // only this attempt's failure may be referenced
     if (mode === 'signUp' && password !== confirmPassword) {
       setError(t('auth.errorPasswordMismatch'));
       return;
@@ -133,6 +164,10 @@ export default function AuthScreen() {
     }
     if (result.ok === 'pending-confirmation') {
       setPendingEmail(result.email);
+      // Sign-up just sent the confirmation email: an immediate resend would
+      // only be refused by Supabase's per-address window.
+      setResendAvailableAt(Date.now() + RESEND_COOLDOWN_MS);
+      setNow(Date.now());
       setMode('pendingConfirmation');
       return;
     }
@@ -142,18 +177,27 @@ export default function AuthScreen() {
       setMode('pendingConfirmation');
       return;
     }
-    setError(t(`auth.${errorKeys[result.error]}` as never));
+    setError(withDiagnostic(t(`auth.${errorKeys[result.error]}` as never), t));
   };
 
   const handleResend = async () => {
-    if (!pendingEmail || resending) return;
+    if (!pendingEmail || resending || resendSecondsLeft(resendAvailableAt, Date.now()) > 0) return;
     setResending(true);
-    const result = await resendConfirmationEmail(pendingEmail);
-    setResending(false);
-    Alert.alert(
-      result.ok ? t('auth.resendConfirmationSentTitle') : t('auth.resendConfirmationFailedTitle'),
-      result.ok ? t('auth.resendConfirmationSentMessage') : t('auth.errorUnknown'),
-    );
+    let result: Awaited<ReturnType<typeof resendConfirmationEmail>>;
+    try {
+      result = await resendConfirmationEmail(pendingEmail);
+    } catch {
+      result = { ok: false, error: 'network-error' };
+    } finally {
+      setResending(false);
+    }
+    const feedback = resendFeedback(result);
+    if (feedback.startCooldown) {
+      setResendAvailableAt(Date.now() + RESEND_COOLDOWN_MS);
+      setNow(Date.now());
+    }
+    const message = t(feedback.messageKey);
+    Alert.alert(t(feedback.titleKey), result.ok || feedback.startCooldown ? message : withDiagnostic(message, t));
   };
 
   if (!accountsAvailable) {
@@ -197,10 +241,16 @@ export default function AuthScreen() {
             {t('auth.pendingConfirmationHint')}
           </Text>
           <Button
-            label={resending ? t('common.saving') : t('auth.resendConfirmationAction')}
+            label={
+              resending
+                ? t('common.saving')
+                : resendWait > 0
+                  ? t('auth.resendConfirmationWait', { seconds: resendWait })
+                  : t('auth.resendConfirmationAction')
+            }
             variant="secondary"
             onPress={handleResend}
-            disabled={resending}
+            disabled={resending || resendWait > 0}
             style={{ marginTop: 24 }}
           />
           <Button label={t('auth.backToSignIn')} onPress={() => setMode('signIn')} style={{ marginTop: 12 }} />

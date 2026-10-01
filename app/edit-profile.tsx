@@ -1,9 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AlertButton, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTranslation } from '../src/i18n/useTranslation';
+import { takeAuthDiagnostic, takeErrorDetailLine } from '../src/lib/authDiagnostics';
+import { AvatarError, AvatarErrorCode, isAvatarUploadAvailable } from '../src/data/supabase/avatarUpload';
+import { UiKey, useTranslation } from '../src/i18n/useTranslation';
 import { Avatar } from '../src/ui/components/Avatar';
 import { Button } from '../src/ui/components/Button';
 import { Screen } from '../src/ui/components/Screen';
@@ -13,6 +16,15 @@ import { useAuthStore } from '../src/state/authStore';
 import { useTheme } from '../src/theme/useTheme';
 
 const BIO_MAX_LENGTH = 160;
+const AVATAR_SIZE = 72;
+
+const PHOTO_ERROR_MESSAGE_KEYS: Record<AvatarErrorCode, UiKey> = {
+  offline: 'editProfile.photoErrorOffline',
+  'too-large': 'editProfile.photoErrorTooLarge',
+  'processing-failed': 'editProfile.photoErrorProcessing',
+  'upload-failed': 'editProfile.photoErrorUpload',
+  'not-available': 'editProfile.photoErrorUnavailable',
+};
 
 export default function EditProfileScreen() {
   const theme = useTheme();
@@ -21,15 +33,23 @@ export default function EditProfileScreen() {
   const { t } = useTranslation();
   const profile = useAuthStore((s) => s.profile);
   const updateProfile = useAuthStore((s) => s.updateProfile);
+  const setAvatarPhoto = useAuthStore((s) => s.setAvatarPhoto);
+  const removeAvatarPhoto = useAuthStore((s) => s.removeAvatarPhoto);
 
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
   const [bio, setBio] = useState(profile?.bio ?? '');
   const [saving, setSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   if (!profile) {
     router.back();
     return null;
   }
+
+  // Profile photos are shown to OTHER people, so they need the real backend
+  // (public Storage). The on-device dev backend has no honest equivalent —
+  // the avatar simply isn't tappable there (monogram only).
+  const photoAvailable = isAvatarUploadAvailable();
 
   const trimmedName = displayName.trim();
   const canSave = trimmedName.length > 0 && !saving;
@@ -41,6 +61,65 @@ export default function EditProfileScreen() {
     setSaving(false);
     router.back();
   };
+
+  const showPhotoError = (titleKey: UiKey, error: unknown) => {
+    const code: AvatarErrorCode = error instanceof AvatarError ? error.code : 'upload-failed';
+    // Error reference (step-status-code, no sensitive detail) so a failure on
+    // a device can be traced in Supabase → Logs; full detail in diagnostics builds.
+    const detail = takeErrorDetailLine((ref) => t('common.errorReference', { code: ref }));
+    Alert.alert(t(titleKey), [t(PHOTO_ERROR_MESSAGE_KEYS[code]), detail].filter(Boolean).join('\n\n'));
+  };
+
+  const choosePhoto = async () => {
+    // Same as the recipe editor: the system photo picker (PHPicker on iOS,
+    // the Android Photo Picker) runs out of process and only hands back the
+    // chosen photo — no photo-library permission, and no camera (blocked in
+    // app.json).
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+    } catch {
+      Alert.alert(t('editProfile.photoPickerFailedTitle'), t('editProfile.photoPickerFailedMessage'));
+      return;
+    }
+    const asset = !result.canceled ? result.assets[0] : undefined;
+    if (!asset) return;
+    takeAuthDiagnostic(); // start clean: only this attempt's failure may be shown
+    setPhotoBusy(true);
+    try {
+      await setAvatarPhoto({ uri: asset.uri, width: asset.width, height: asset.height });
+    } catch (e) {
+      showPhotoError('editProfile.photoErrorTitle', e);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const removePhoto = async () => {
+    setPhotoBusy(true);
+    try {
+      await removeAvatarPhoto();
+    } catch (e) {
+      showPhotoError('editProfile.removePhotoErrorTitle', e);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const openPhotoOptions = () => {
+    if (photoBusy) return;
+    const buttons: AlertButton[] = [{ text: t('editProfile.choosePhoto'), onPress: () => void choosePhoto() }];
+    if (profile.avatarUrl) buttons.push({ text: t('editProfile.removePhoto'), style: 'destructive', onPress: () => void removePhoto() });
+    buttons.push({ text: t('common.cancel'), style: 'cancel' });
+    Alert.alert(t('editProfile.photoOptionsTitle'), t('editProfile.photoOptionsMessage'), buttons);
+  };
+
+  const avatar = <Avatar seed={profile.id} label={trimmedName || profile.displayName} size={AVATAR_SIZE} uri={profile.avatarUrl} />;
 
   return (
     <Screen>
@@ -55,7 +134,29 @@ export default function EditProfileScreen() {
 
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.avatarRow}>
-            <Avatar seed={profile.id} label={trimmedName || profile.displayName} size={72} />
+            {photoAvailable ? (
+              <Pressable
+                onPress={openPhotoOptions}
+                disabled={photoBusy}
+                accessibilityRole="button"
+                accessibilityLabel={t('editProfile.changePhoto')}
+                accessibilityState={{ busy: photoBusy, disabled: photoBusy }}
+                hitSlop={8}
+              >
+                {avatar}
+                {photoBusy ? (
+                  <View style={[styles.busyOverlay, { borderRadius: AVATAR_SIZE / 2 }]} accessibilityLabel={t('editProfile.photoUploading')}>
+                    <ActivityIndicator color="#FFFFFF" />
+                  </View>
+                ) : (
+                  <View style={[styles.cameraBadge, { backgroundColor: theme.colors.accent, borderColor: theme.colors.background }]}>
+                    <Ionicons name="camera" size={13} color={theme.colors.onAccent} />
+                  </View>
+                )}
+              </Pressable>
+            ) : (
+              avatar
+            )}
           </View>
 
           <SectionLabel style={styles.label}>{t('editProfile.displayNameLabel')}</SectionLabel>
@@ -99,6 +200,18 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 8 },
   content: { paddingHorizontal: 20, paddingBottom: 48 },
   avatarRow: { alignItems: 'center', marginBottom: 28 },
+  busyOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
+  cameraBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   label: { marginTop: 20, marginBottom: 10 },
   input: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, minHeight: 46 },
   bioInput: { minHeight: 90, textAlignVertical: 'top', paddingTop: 12 },

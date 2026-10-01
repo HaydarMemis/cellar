@@ -3,6 +3,7 @@ import { AuthError, isAuthError, isAuthRetryableFetchError, isAuthSessionMissing
 import * as AuthSessionModule from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { AuthSession, UserProfile } from '../../domain/types';
+import { recordAuthDiagnostic } from '../../lib/authDiagnostics';
 import { reportError } from '../../lib/crashReporting';
 import {
   AuthBackend,
@@ -46,8 +47,17 @@ function client() {
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function toProfile(row: { id: string; username: string; display_name: string; bio: string | null; avatar_color_seed: string; created_at: string }): UserProfile {
-  return {
+/** Exported for tests. `avatar_url` is optional so a database without the 20260928120000 migration still maps cleanly (no photo). */
+export function toProfile(row: {
+  id: string;
+  username: string;
+  display_name: string;
+  bio: string | null;
+  avatar_color_seed: string;
+  avatar_url?: string | null;
+  created_at: string;
+}): UserProfile {
+  const profile: UserProfile = {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
@@ -55,6 +65,8 @@ function toProfile(row: { id: string; username: string; display_name: string; bi
     avatarColorSeed: row.avatar_color_seed,
     createdAt: row.created_at,
   };
+  if (row.avatar_url) profile.avatarUrl = row.avatar_url;
+  return profile;
 }
 
 async function fetchProfile(userId: string): Promise<UserProfile | undefined> {
@@ -83,6 +95,13 @@ function mapAuthError(error: AuthError, context: 'signUp' | 'logIn'): AuthErrorC
   }
   if (code === 'invalid_credentials' || message.includes('invalid login credentials') || message.includes('invalid email or password')) {
     return context === 'signUp' ? 'invalid-password' : 'wrong-password';
+  }
+  // GoTrue answers a sign-up whose confirmation email could not be sent
+  // (SMTP failure / sender not configured) with a 5xx "Error sending
+  // confirmation email" — the sign-up is rolled back. That is not a
+  // connection problem and must not be reported as one.
+  if (message.includes('error sending') && message.includes('email')) {
+    return 'email-send-failed';
   }
   if (code === 'email_not_confirmed' || message.includes('email not confirmed')) {
     return 'email-not-confirmed';
@@ -348,7 +367,8 @@ export const supabaseAuthBackend: AuthBackend = {
     // creation happens after auth.signUp below. Checking here avoids
     // creating an orphaned auth.users row (a real account with no way to
     // ever get a profile) for a username that was always going to collide.
-    const { data: existingUsername } = await client().from('profiles').select('id').eq('username', normalizedUsername).maybeSingle();
+    const { data: existingUsername, error: usernameCheckError } = await client().from('profiles').select('id').eq('username', normalizedUsername).maybeSingle();
+    if (usernameCheckError) recordAuthDiagnostic('signUp:usernameCheck', usernameCheckError); // TEMPORARY auth diagnostics
     if (existingUsername) return { ok: false, error: 'username-taken' };
 
     const displayNameValue = displayName.trim() || normalizedUsername;
@@ -366,9 +386,13 @@ export const supabaseAuthBackend: AuthBackend = {
     });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'signUp' });
+      recordAuthDiagnostic('signUp', error); // TEMPORARY auth diagnostics
       return { ok: false, error: mapAuthError(error, 'signUp') };
     }
-    if (!data.user) return { ok: false, error: 'unknown' };
+    if (!data.user) {
+      recordAuthDiagnostic('signUp', new Error('signUp returned no user and no error')); // TEMPORARY auth diagnostics
+      return { ok: false, error: 'unknown' };
+    }
 
     // With email confirmation on, Supabase answers a sign-up for an
     // already-registered email with an obfuscated user that has NO
@@ -403,6 +427,7 @@ export const supabaseAuthBackend: AuthBackend = {
       );
     if (upsertError) {
       reportError(upsertError, { module: 'SupabaseAuthBackend', action: 'signUp:profileUpsert' });
+      recordAuthDiagnostic('signUp:profileUpsert', upsertError); // TEMPORARY auth diagnostics
       // The auth user and its session exist, but the app will report a
       // failure and stay signed out — never leave a hidden live session
       // behind. The profile is created on the next sign-in instead.
@@ -429,9 +454,14 @@ export const supabaseAuthBackend: AuthBackend = {
     const { data, error } = await client().auth.signInWithPassword({ email: normalizedEmail, password });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'logIn' });
+      // TEMPORARY auth diagnostics — booleans only, never the session/user objects.
+      recordAuthDiagnostic('logIn', error, `session=${!!data?.session} user=${!!data?.user}`);
       return { ok: false, error: mapAuthError(error, 'logIn') };
     }
-    if (!data.user) return { ok: false, error: 'unknown' };
+    if (!data.user) {
+      recordAuthDiagnostic('logIn', new Error('signInWithPassword returned no user'), `session=${!!data.session} user=false`); // TEMPORARY auth diagnostics
+      return { ok: false, error: 'unknown' };
+    }
 
     let profile = await fetchProfile(data.user.id);
     if (!profile) {
@@ -442,6 +472,7 @@ export const supabaseAuthBackend: AuthBackend = {
       profile = await createProfileOnFirstSignIn(data.user.id, data.user.user_metadata, data.user.email);
     }
     if (!profile) {
+      recordAuthDiagnostic('logIn:profile', new Error('profile could not be read or created after sign-in'), `session=${!!data.session} user=true`); // TEMPORARY auth diagnostics
       // signInWithPassword already established a session. The app reports
       // a failure and stays signed out, so drop it — otherwise every later
       // request would silently run as this account while the UI shows a guest.
@@ -466,13 +497,21 @@ export const supabaseAuthBackend: AuthBackend = {
   },
 
   async updateProfile(userId, patch: ProfilePatch) {
-    const update: Record<string, string> = {};
+    const update: Record<string, string | null> = {};
     if (patch.displayName !== undefined) update.display_name = patch.displayName;
     if (patch.bio !== undefined) update.bio = patch.bio;
     if (patch.avatarColorSeed !== undefined) update.avatar_color_seed = patch.avatarColorSeed;
+    // null clears the photo; the column's CHECK only accepts the owner's own avatars/<id>/avatar URL.
+    if (patch.avatarUrl !== undefined) update.avatar_url = patch.avatarUrl;
 
     const { data, error } = await client().from('profiles').update(update).eq('id', userId).select('*').maybeSingle();
-    if (error || !data) return undefined;
+    if (error || !data) {
+      // e.g. 42703 (column missing: migration not applied), 23514 (CHECK),
+      // or no row returned (RLS) — recorded so the screen can show a reference.
+      reportError(error ?? new Error('profile update returned no row'), { module: 'SupabaseAuthBackend', action: 'updateProfile' });
+      recordAuthDiagnostic('profileUpdate', error ?? { message: 'no row returned (RLS or missing profile)', code: 'no_row' });
+      return undefined;
+    }
     return toProfile(data);
   },
 
@@ -487,6 +526,7 @@ export const supabaseAuthBackend: AuthBackend = {
     const { error } = await client().functions.invoke('delete-account', { body });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'deleteAccount' });
+      recordAuthDiagnostic('deleteAccount', error); // TEMPORARY auth diagnostics
       throw error;
     }
     // The user no longer exists server-side; just drop this device's session.
@@ -506,6 +546,7 @@ export const supabaseAuthBackend: AuthBackend = {
     const { error } = await client().auth.resetPasswordForEmail(normalizedEmail, { redirectTo: passwordResetRedirectUrl() });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'requestPasswordReset' });
+      recordAuthDiagnostic('requestPasswordReset', error); // TEMPORARY auth diagnostics
       const mapped = mapAuthError(error, 'logIn');
       // Never surface anything that would let a caller distinguish "no
       // such account" from "sent" — resetPasswordForEmail itself already
@@ -524,9 +565,15 @@ export const supabaseAuthBackend: AuthBackend = {
     const { error } = await client().auth.resend({ type: 'signup', email: normalizedEmail, options: { emailRedirectTo: emailConfirmationRedirectUrl() } });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'resendConfirmationEmail' });
+      recordAuthDiagnostic('resendConfirmationEmail', error); // TEMPORARY auth diagnostics
       const mapped = mapAuthError(error, 'logIn');
+      // Rate-limited is the NORMAL answer to a resend within Supabase's
+      // per-address window (default 60 s) right after sign-up — the first
+      // email was sent. The screen must present that as "already sent",
+      // not as a failure.
       if (mapped === 'rate-limited') return { ok: false, error: 'rate-limited' };
-      return { ok: false, error: 'network-error' };
+      if (mapped === 'network-error') return { ok: false, error: 'network-error' };
+      return { ok: false, error: 'unknown' };
     }
     return { ok: true };
   },
@@ -542,6 +589,7 @@ export const supabaseAuthBackend: AuthBackend = {
     const { error } = await client().auth.setSession({ access_token: params.access_token, refresh_token: params.refresh_token });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'confirmPasswordResetSession' });
+      recordAuthDiagnostic('confirmPasswordResetSession', error); // TEMPORARY auth diagnostics
       return false;
     }
     return true;
@@ -552,6 +600,7 @@ export const supabaseAuthBackend: AuthBackend = {
     const { error } = await client().auth.updateUser({ password: newPassword });
     if (error) {
       reportError(error, { module: 'SupabaseAuthBackend', action: 'updatePassword' });
+      recordAuthDiagnostic('updatePassword', error); // TEMPORARY auth diagnostics
       const code = ((error as { code?: string }).code ?? '').toLowerCase();
       // "Secure password change" is on and this session is older than
       // Supabase's recent-login window: a fresh sign-in is required.

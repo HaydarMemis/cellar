@@ -191,5 +191,57 @@ r=await as(db,'service_role',null,aps,[E,true,'weekly','2026-09-27T12:00:00Z']);
 r=await as(db,'authenticated',E,`update public.subscribers set is_premium=true where user_id=$1`,[E]); check('client still cannot write its own subscriber row', r.ok && r.affected===0, r);
 }
 
+// --- profile avatars migration (20260928120000) ---
+{
+const J='cccccccc-cccc-4ccc-8ccc-cccccccccccc', K='dddddddd-dddd-4ddd-8ddd-dddddddddddd', L='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+await admin(db,`insert into auth.users values ('${J}','j@x'),('${K}','k@x'),('${L}','l@x');
+ insert into public.profiles (id,username,display_name,avatar_color_seed) values ('${J}','jane','J','j'),('${K}','ken','K','k'),('${L}','lena','L','l');`);
+const up=(uid,name,role='authenticated')=>as(db,role,uid,`insert into storage.objects (bucket_id,name) values ('avatars',$1)`,[name]);
+const denied=(r)=>!r.ok&&r.code==='42501';
+r=await db.query(`select public, file_size_limit::int l, allowed_mime_types m from storage.buckets where id='avatars'`);
+check('avatars bucket: public, 5 MB, jpeg/png/webp only', r.rows[0]?.public===true && r.rows[0].l===5242880 && r.rows[0].m.join()==='image/jpeg,image/png,image/webp', r.rows);
+r=await up(J,`${J}/avatar`); check('avatars: own <uid>/avatar upload accepted', r.ok, r);
+r=await up(K,`${J}/avatar`); check("avatars: upload to another user's path rejected", denied(r), r);
+for (const bad of [`${J}/avatar.jpg`, `${J}/photo`, `${J}/x/avatar`, `${J}/avatar/`, `avatar`, `${J}avatar`, `${J.toUpperCase()}/avatar`]) {
+  r=await up(J,bad); check(`avatars: wrong object name rejected (${bad.replace(J,'<uid>').replace(J.toUpperCase(),'<UID>')})`, denied(r), r);
+}
+r=await up(null,`${J}/avatar`,'anon'); check('avatars: anon upload rejected', denied(r), r);
+r=await up(null,`/avatar`,'anon'); check('avatars: anon upload with empty uid rejected', denied(r), r);
+r=await as(db,'authenticated',K,`update storage.objects set owner=$1 where bucket_id='avatars' and name=$2`,[K,`${J}/avatar`]); check("avatars: other user cannot overwrite someone's avatar (0 rows)", r.ok && r.affected===0, r);
+r=await as(db,'authenticated',K,`delete from storage.objects where bucket_id='avatars' and name=$1`,[`${J}/avatar`]); check("avatars: other user cannot delete someone's avatar (0 rows)", r.ok && r.affected===0, r);
+r=await as(db,'anon',null,`delete from storage.objects where bucket_id='avatars'`); check('avatars: anon cannot delete (0 rows)', r.ok && r.affected===0, r);
+r=await as(db,'authenticated',J,`update storage.objects set owner=$1 where bucket_id='avatars' and name=$2`,[J,`${J}/avatar`]); check('avatars: owner can replace own avatar (upsert path)', r.ok && r.affected===1, r);
+r=await as(db,'authenticated',J,`update storage.objects set name=$1 where bucket_id='avatars' and name=$2`,[`${K}/avatar`,`${J}/avatar`]); check("avatars: owner cannot rename own avatar into another user's path", denied(r), r);
+r=await as(db,'authenticated',J,`update storage.objects set bucket_id='recipe-media' where bucket_id='avatars' and name=$1`,[`${J}/avatar`]); check('avatars: owner cannot move own avatar into another bucket', denied(r), r);
+r=await as(db,'authenticated',J,`select count(*)::int c from storage.objects where bucket_id='avatars'`); check('avatars: owner can list own avatar', r.ok && r.rows[0].c===1, r);
+r=await as(db,'authenticated',K,`select count(*)::int c from storage.objects where bucket_id='avatars'`); check("avatars: other users cannot list someone's avatar", r.ok && r.rows[0].c===0, r);
+r=await as(db,'anon',null,`select count(*)::int c from storage.objects where bucket_id='avatars'`); check('avatars: anon cannot list the bucket', r.ok && r.rows[0].c===0, r);
+r=await as(db,'authenticated',J,`insert into storage.objects (bucket_id,name) values ('recipe-media',$1)`,[`${J}/avatar`]); check('avatars: <uid>/avatar still rejected in recipe-media', denied(r), r);
+
+const AV='https://abcdefghijklmnopqrst.supabase.co/storage/v1/object/public/avatars';
+const setUrl=(uid,url,target=uid)=>as(db,'authenticated',uid,`update public.profiles set avatar_url=$1 where id=$2 returning avatar_url`,[url,target]);
+r=await setUrl(J,`${AV}/${J}/avatar?v=1727000000000`); check('avatar_url: own versioned URL accepted (avatarUpload.ts shape)', r.ok && r.rows[0]?.avatar_url?.endsWith('?v=1727000000000'), r);
+r=await setUrl(J,`${AV}/${J}/avatar`); check('avatar_url: own unversioned URL accepted', r.ok && r.rows.length===1, r);
+for (const [label,url] of [
+  ['external URL', 'https://attacker.example/pixel.gif'],
+  ["another user's avatar", `${AV}/${K}/avatar?v=1`],
+  ['recipe-media object', `https://abcdefghijklmnopqrst.supabase.co/storage/v1/object/public/recipe-media/${J}/avatar`],
+  ['look-alike host', `https://abcdefghijklmnopqrst.supabase.co.evil.example/storage/v1/object/public/avatars/${J}/avatar`],
+  ['http (not https)', `http://abcdefghijklmnopqrst.supabase.co/storage/v1/object/public/avatars/${J}/avatar`],
+  ['extra query', `${AV}/${J}/avatar?v=1&x=https://evil`],
+  ['other object name', `${AV}/${J}/avatar.jpg`],
+  ['local file URI', 'file:///var/mobile/Containers/Data/Application/X/Documents/avatar.jpg'],
+  ['empty string', ''],
+]) { r=await setUrl(J,url); check(`avatar_url: ${label} rejected`, !r.ok&&r.code==='23514', r); }
+r=await as(db,'authenticated',K,`update public.profiles set avatar_url=$1 where id=$2`,[`${AV}/${K}/avatar`,J]); check("avatar_url: cannot set on someone else's profile (0 rows)", r.ok && r.affected===0, r);
+r=await as(db,'authenticated',K,`update public.profiles set avatar_url=null where id=$1`,[J]); check("avatar_url: cannot clear someone else's photo (0 rows)", r.ok && r.affected===0, r);
+r=await as(db,'anon',null,`select avatar_url from public.profiles where id=$1`,[J]); check('avatar_url: publicly readable like the rest of the profile', r.ok && r.rows[0]?.avatar_url===`${AV}/${J}/avatar`, r);
+r=await setUrl(J,null); check('avatar_url: owner can clear it (null)', r.ok && r.rows[0]?.avatar_url===null, r);
+r=await as(db,'authenticated',J,`delete from storage.objects where bucket_id='avatars' and name=$1`,[`${J}/avatar`]); check('avatars: owner can delete own avatar', r.ok && r.affected>=1, r);
+r=await as(db,'authenticated',J,`insert into public.profiles (id,username,display_name,avatar_color_seed,avatar_url) values ($1,'x','X','x',$2)`,[L,`${AV}/${J}/avatar`]); check('avatar_url: cannot create a profile row for someone else carrying an avatar_url', !r.ok, r);
+await admin(db,`delete from auth.users where id='${L}'`);
+r=await up(L,`${L}/avatar`); check('avatars: deleted account with a still-valid JWT cannot upload', denied(r), r);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

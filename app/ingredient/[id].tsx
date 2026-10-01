@@ -10,6 +10,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { Chip } from '../../src/ui/components/Chip';
 import { DrinkCard } from '../../src/ui/components/DrinkCard';
 import { Screen } from '../../src/ui/components/Screen';
+import { NotFoundState } from '../../src/ui/components/NotFoundState';
 import { SectionLabel } from '../../src/ui/components/SectionLabel';
 import { Text } from '../../src/ui/components/Text';
 import { useFavoritesStore } from '../../src/state/favoritesStore';
@@ -32,13 +33,7 @@ export default function IngredientDetailScreen() {
   const content = useMemo(() => (ingredient ? tIngredientContent(ingredient) : null), [ingredient, tIngredientContent]);
 
   if (!ingredient) {
-    return (
-      <Screen>
-        <View style={[styles.notFound, { paddingTop: insets.top + 40 }]}>
-          <Text variant="headline">{t('cocktailDetail.notFound')}</Text>
-        </View>
-      </Screen>
-    );
+    return <NotFoundState message={t('cocktailDetail.notFound')} />;
   }
 
   const openIngredient = (ingredientId: string) => router.push({ pathname: '/ingredient/[id]', params: { id: ingredientId } });

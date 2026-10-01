@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import Animated, { Extrapolation, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +19,7 @@ import { HorizontalDrinkRow } from '../../src/ui/components/HorizontalDrinkRow';
 import { JournalLogModal } from '../../src/ui/components/JournalLogModal';
 import { ScaleModal } from '../../src/ui/components/ScaleModal';
 import { Screen } from '../../src/ui/components/Screen';
+import { NotFoundState } from '../../src/ui/components/NotFoundState';
 import { SectionLabel } from '../../src/ui/components/SectionLabel';
 import { Text } from '../../src/ui/components/Text';
 import { useAuthStore } from '../../src/state/authStore';
@@ -122,17 +123,7 @@ export default function CocktailDetailScreen() {
   }, [item, servings]);
 
   if (!item) {
-    return (
-      <Screen>
-        <View style={[styles.notFound, { paddingTop: insets.top + 40 }]}>
-          {isResolvingRemote ? (
-            <ActivityIndicator color={theme.colors.textSecondary} />
-          ) : (
-            <Text variant="headline">{t(remoteLookupFailed ? 'cocktailDetail.loadFailed' : 'cocktailDetail.notFound')}</Text>
-          )}
-        </View>
-      </Screen>
-    );
+    return <NotFoundState loading={isResolvingRemote} message={t(remoteLookupFailed ? 'cocktailDetail.loadFailed' : 'cocktailDetail.notFound')} />;
   }
 
   const source: DrinkSource =

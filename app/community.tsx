@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authBackend } from '../src/data/community';
@@ -43,9 +43,16 @@ export default function CommunityFeedScreen() {
     if (recipes.length === 0) load();
   }, [recipes.length, load]);
 
+  // Owners already asked for — a profile the backend doesn't return (deleted
+  // account, network error answered with []) must not be re-requested on every
+  // render: each response creates a new Map, which re-ran this effect forever.
+  const requestedCreatorIds = useRef(new Set<string>());
   useEffect(() => {
-    const missing = Array.from(new Set(visible.map((r) => r.ownerId))).filter((id) => !creatorsById.has(id));
+    const missing = Array.from(new Set(visible.map((r) => r.ownerId))).filter(
+      (id) => !creatorsById.has(id) && !requestedCreatorIds.current.has(id),
+    );
     if (missing.length === 0) return;
+    missing.forEach((id) => requestedCreatorIds.current.add(id));
     authBackend
       .getProfilesByIds(missing)
       .then((profiles) =>

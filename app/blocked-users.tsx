@@ -32,7 +32,10 @@ export default function BlockedUsersScreen() {
   useEffect(() => {
     // getProfilesByIds([]) already resolves to [] (see AuthBackend), so
     // there's no empty-array special case to short-circuit synchronously.
-    authBackend.getProfilesByIds(Array.from(blockedByMe)).then(setProfiles);
+    authBackend
+      .getProfilesByIds(Array.from(blockedByMe))
+      .then(setProfiles)
+      .catch(() => undefined);
   }, [blockedByMe]);
 
   return (

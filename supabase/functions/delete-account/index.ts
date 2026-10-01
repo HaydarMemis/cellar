@@ -16,7 +16,7 @@
 //     [functions.delete-account] verify_jwt = true); getUser() then confirms
 //     the account still exists and body.userId must equal it — a user can
 //     only ever delete themselves.
-//  2. Storage media cleanup (see below). If it FAILS, the function returns
+//  2. Storage cleanup — recipe media and the profile photo (see below). If it FAILS, the function returns
 //     500 BEFORE deleting anything else, so a retry can finish the job —
 //     once the auth user is gone nobody could ever list/remove those files
 //     from the app again.
@@ -55,7 +55,9 @@
 // bucket already lives under `<owner_id>/<recipe_id>/<kind>` (enforced by
 // the bucket's own RLS, see supabase/migrations/20260922000400_recipe_media_storage.sql
 // and 20260927120000_audit_hardening.sql), so this one list+remove catches
-// every recipe's media for this user in one pass.
+// every recipe's media for this user in one pass. The optional profile
+// photo (`avatars` bucket, `<user_id>/avatar`) is removed the same way,
+// with the same fail-before-delete semantics.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { handleCorsPreflight, jsonResponse } from '../_shared/cors.ts';
 
@@ -107,6 +109,27 @@ async function removeAllRecipeMediaForOwner(
     const { error } = await bucket.remove(allPaths.slice(i, i + 500));
     if (error) throw error;
   }
+}
+
+/**
+ * The profile photo lives at exactly `<userId>/avatar` in the public
+ * `avatars` bucket (supabase/migrations/20260928120000_profile_avatars.sql).
+ * The folder is still listed rather than guessing the name, so anything
+ * else under the user's prefix (none today) is removed too. A no-op when
+ * the user never set a photo.
+ */
+async function removeAvatarForUser(adminClient: SupabaseClient, userId: string): Promise<void> {
+  const bucket = adminClient.storage.from('avatars');
+  const paths = (await listAll(bucket, userId)).filter((e) => e.id).map((e) => `${userId}/${e.name}`);
+  if (paths.length === 0) return;
+  const { error } = await bucket.remove(paths);
+  if (error) throw error;
+}
+
+/** Every Storage object this user owns (recipe media + profile photo). Throws on any failure. */
+async function removeAllStorageForUser(adminClient: SupabaseClient, userId: string): Promise<void> {
+  await removeAllRecipeMediaForOwner(adminClient, userId);
+  await removeAvatarForUser(adminClient, userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,9 +325,9 @@ Deno.serve(async (req) => {
     // Both cleanups are idempotent; re-running them finishes anything a
     // previous attempt could not.
     try {
-      await removeAllRecipeMediaForOwner(adminClient, sub);
+      await removeAllStorageForUser(adminClient, sub);
     } catch (e) {
-      console.error('delete-account: recipe-media cleanup failed for an already-deleted account', e instanceof Error ? e.message : String(e));
+      console.error('delete-account: storage cleanup failed for an already-deleted account', e instanceof Error ? e.message : String(e));
       return jsonResponse({ error: 'Media cleanup failed' }, 500);
     }
     const revenueCatDeletion = await deleteRevenueCatCustomer(sub);
@@ -321,9 +344,9 @@ Deno.serve(async (req) => {
   // Media first, and a hard stop on failure: while the account still exists
   // the client retries and this runs again; after deletion nothing could.
   try {
-    await removeAllRecipeMediaForOwner(adminClient, uid);
+    await removeAllStorageForUser(adminClient, uid);
   } catch (e) {
-    console.error('delete-account: recipe-media cleanup failed; account NOT deleted (client will retry)', e instanceof Error ? e.message : String(e));
+    console.error('delete-account: storage cleanup (recipe media / avatar) failed; account NOT deleted (client will retry)', e instanceof Error ? e.message : String(e));
     return jsonResponse({ error: 'Media cleanup failed' }, 500);
   }
 

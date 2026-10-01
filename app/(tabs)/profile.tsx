@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import React, { useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { planIds } from '../../src/domain/entitlements';
 import { isSupabaseConfigured } from '../../src/data/supabase/client';
@@ -15,6 +15,7 @@ import { SectionLabel } from '../../src/ui/components/SectionLabel';
 import { SegmentedControl } from '../../src/ui/components/SegmentedControl';
 import { Text } from '../../src/ui/components/Text';
 import { SUPPORT_EMAIL } from '../../src/config/legal';
+import { buildStorageReport, formatCrash, readLastCrash } from '../../src/lib/deviceDiagnostics';
 import { LOCAL_GUEST_OWNER_ID } from '../../src/domain/types';
 import { useAuthStore } from '../../src/state/authStore';
 import { useEntitlementStore } from '../../src/state/entitlementStore';
@@ -66,7 +67,18 @@ export default function ProfileScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-        <Text variant="title" style={styles.title}>
+        {/* TEMPORARY device diagnostics: long-press the title for a local-storage
+            report (counts only) and the last recorded crash. */}
+        <Text
+          variant="title"
+          style={styles.title}
+          onLongPress={() => {
+            void buildStorageReport(myOwnerId).then((report) => {
+              const crash = readLastCrash();
+              Alert.alert('Cellar diagnostics', [report, crash ? `\nlast crash:\n${formatCrash(crash)}` : '\nlast crash: none recorded'].join('\n'));
+            });
+          }}
+        >
           {t('profile.title')}
         </Text>
         <Text variant="body" color="secondary" style={styles.subtitle}>
@@ -81,7 +93,7 @@ export default function ProfileScreen() {
                 style={styles.accountRow}
                 accessibilityRole="button"
               >
-                <Avatar seed={authProfile.id} label={authProfile.displayName} size={44} />
+                <Avatar seed={authProfile.id} label={authProfile.displayName} size={44} uri={authProfile.avatarUrl} />
                 <View style={{ flex: 1 }}>
                   <Text variant="bodyStrong">{authProfile.displayName}</Text>
                   <Text variant="caption" color="secondary">
@@ -107,8 +119,8 @@ export default function ProfileScreen() {
                 {t('profile.signInSubtitle')}
               </Text>
               <View style={styles.authButtonRow}>
-                <Button label={t('profile.signIn')} variant="secondary" onPress={() => router.push('/auth')} style={{ flex: 1 }} />
-                <Button label={t('profile.createAccount')} onPress={() => router.push('/auth?mode=signUp')} style={{ flex: 1 }} />
+                <Button label={t('profile.signIn')} variant="secondary" onPress={() => router.push('/auth')} style={styles.authButton} />
+                <Button label={t('profile.createAccount')} onPress={() => router.push('/auth?mode=signUp')} style={styles.authButton} />
               </View>
             </View>
           )}
@@ -325,7 +337,11 @@ const styles = StyleSheet.create({
   accountRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   subRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 32 },
   signInSubtitle: { lineHeight: 20 },
-  authButtonRow: { flexDirection: 'row', gap: 10 },
+  // Side by side when both labels fit (flexBasis ≈ the longer label + padding),
+  // stacked full-width on narrow screens / longer translations / larger text,
+  // instead of squeezing "Create account" out of its button.
+  authButtonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  authButton: { flexGrow: 1, flexBasis: 150 },
   premiumCard: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 14 },
   linksCard: { borderRadius: 14, overflow: 'hidden' },
   linkRow: {

@@ -51,7 +51,7 @@ jest.mock('@react-native-google-signin/google-signin', () => ({
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const profile = { id: USER_ID, username: 'alice', displayName: 'Alice', avatarColorSeed: 'alice', createdAt: '2026-01-01T00:00:00.000Z' };
-const ENV_KEYS = ['EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME'];
+const ENV_KEYS = ['EXPO_PUBLIC_APPLE_NATIVE_CAPABILITY_ENABLED', 'EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME'];
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeAll(() => ENV_KEYS.forEach((k) => (savedEnv[k] = process.env[k])));
@@ -73,7 +73,7 @@ function enableApple() {
 function enableGoogle() {
   process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = 'web-client.apps.googleusercontent.com';
   process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = 'ios-client.apps.googleusercontent.com';
-  process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME = 'com.googleusercontent.apps.ios-client';
+  // No EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME: app.config.js derives the Info.plist scheme from the iOS client id.
 }
 
 describe('availability (which buttons the auth screen shows)', () => {
@@ -83,6 +83,15 @@ describe('availability (which buttons the auth screen shows)', () => {
     expect(await supabaseSocialAuthProvider.isAvailable('apple')).toBe(true);
     mockApple.isAvailableAsync.mockResolvedValue(false);
     expect(await supabaseSocialAuthProvider.isAvailable('apple')).toBe(false);
+  });
+
+  it('Apple: hidden when the build was generated without the native capability, even with the app flag on', async () => {
+    enableApple();
+    process.env.EXPO_PUBLIC_APPLE_NATIVE_CAPABILITY_ENABLED = 'false';
+    expect(await supabaseSocialAuthProvider.isAvailable('apple')).toBe(false);
+    expect(await supabaseSocialAuthProvider.signIn('apple')).toEqual({ ok: false, error: 'not-configured' });
+    expect(mockApple.signInAsync).not.toHaveBeenCalled();
+    expect(await supabaseSocialAuthProvider.getAppleAuthorizationCode?.()).toBeNull();
   });
 
   it('Google (iOS): only with the web client id, the iOS client id and the iOS URL scheme', async () => {
@@ -95,6 +104,12 @@ describe('availability (which buttons the auth screen shows)', () => {
     expect(mockGoogleSignin.configure).toHaveBeenCalledWith(
       expect.objectContaining({ webClientId: 'web-client.apps.googleusercontent.com', iosClientId: 'ios-client.apps.googleusercontent.com' }),
     );
+  });
+
+  it('Google stays available when the Apple native capability is off', async () => {
+    enableGoogle();
+    process.env.EXPO_PUBLIC_APPLE_NATIVE_CAPABILITY_ENABLED = 'false';
+    expect(await supabaseSocialAuthProvider.isAvailable('google')).toBe(true);
   });
 });
 
@@ -198,10 +213,21 @@ describe('Google Sign-In', () => {
     expect(mockGoogleSignin.signOut).toHaveBeenCalled();
   });
 
-  it('not configured → not-configured, SDK never called', async () => {
-    delete process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME;
+  it('not configured (no iOS client id) → not-configured, SDK never called', async () => {
+    delete process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
     expect(await supabaseSocialAuthProvider.signIn('google')).toEqual({ ok: false, error: 'not-configured' });
     expect(mockGoogleSignin.signIn).not.toHaveBeenCalled();
+  });
+
+  it('a malformed iOS client id → not-configured (its derived URL scheme would not exist), SDK never called', async () => {
+    process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = 'not-a-client-id';
+    expect(await supabaseSocialAuthProvider.signIn('google')).toEqual({ ok: false, error: 'not-configured' });
+    expect(mockGoogleSignin.signIn).not.toHaveBeenCalled();
+  });
+
+  it('a stale EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME is irrelevant at runtime (the scheme comes from the client id)', async () => {
+    process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME = 'com.googleusercontent.apps.something-else';
+    expect(await supabaseSocialAuthProvider.isAvailable('google')).toBe(true);
   });
 });
 

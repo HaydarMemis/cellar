@@ -90,6 +90,60 @@ export function resolveLocalPhotoUri(uri: string | undefined): string | undefine
 }
 
 /**
+ * Resize (longest edge ≤ maxEdge, never upscaling) and re-encode as JPEG —
+ * converts HEIC and drops EXIF/GPS metadata. Returns the manipulator's
+ * output file (in the cache directory). Throws PhotoProcessingError; the
+ * unprocessed original is never returned as a fallback.
+ */
+async function resizeAndReencode(
+  asset: { uri: string; width?: number; height?: number },
+  maxEdge: number,
+  quality: number,
+  action: string,
+): Promise<string> {
+  try {
+    const context = ImageManipulator.manipulate(asset.uri);
+    const resize = targetResize(asset.width ?? 0, asset.height ?? 0, maxEdge);
+    if (resize) context.resize(resize);
+    const rendered = await context.renderAsync();
+    const saved = await rendered.saveAsync({ compress: quality, format: SaveFormat.JPEG });
+    return saved.uri;
+  } catch (e) {
+    reportError(e, { module: 'localMedia', action });
+    throw new PhotoProcessingError('process', e);
+  }
+}
+
+/** Longest edge of an uploaded profile photo — shown at most ~72 pt (216 px @3x); 512 leaves headroom and keeps uploads ~30–120 KB. */
+export const AVATAR_MAX_EDGE = 512;
+export const AVATAR_JPEG_QUALITY = 0.8;
+
+/**
+ * Turns a freshly picked photo into the file uploaded as the profile photo:
+ * resized (longest edge ≤ 512 px) and re-encoded as JPEG (HEIC converted,
+ * EXIF/GPS dropped). Not square-cropped — every Avatar renders it with
+ * `contentFit="cover"` inside a circle. The result is a temporary cache
+ * file: it is uploaded right away and then deleted with
+ * discardProcessedAvatar(); nothing is kept in documents (the server copy
+ * is the source of truth). Throws PhotoProcessingError — the caller shows
+ * an error and never uploads the unprocessed original.
+ */
+export async function prepareAvatarPhoto(asset: { uri: string; width?: number; height?: number }): Promise<string> {
+  return resizeAndReencode(asset, AVATAR_MAX_EDGE, AVATAR_JPEG_QUALITY, 'processAvatar');
+}
+
+/** Deletes the temporary file prepareAvatarPhoto produced. Best-effort, never throws. */
+export function discardProcessedAvatar(uri: string | undefined): void {
+  if (!uri || !uri.startsWith('file://')) return;
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {
+    // cache files are purged by the OS eventually anyway
+  }
+}
+
+/**
  * Turns a freshly picked photo into the file a recipe stores:
  * 1. resized (longest edge ≤ 1600 px) and re-encoded as JPEG — this also
  *    converts HEIC and drops EXIF/GPS metadata;
@@ -102,18 +156,7 @@ export function resolveLocalPhotoUri(uri: string | undefined): string | undefine
  * either step fails; callers show an error and keep the previous photo.
  */
 export async function prepareRecipePhoto(asset: { uri: string; width?: number; height?: number }): Promise<string> {
-  let processedUri: string;
-  try {
-    const context = ImageManipulator.manipulate(asset.uri);
-    const resize = targetResize(asset.width ?? 0, asset.height ?? 0);
-    if (resize) context.resize(resize);
-    const rendered = await context.renderAsync();
-    const saved = await rendered.saveAsync({ compress: RECIPE_PHOTO_JPEG_QUALITY, format: SaveFormat.JPEG });
-    processedUri = saved.uri;
-  } catch (e) {
-    reportError(e, { module: 'localMedia', action: 'processPhoto' });
-    throw new PhotoProcessingError('process', e);
-  }
+  const processedUri = await resizeAndReencode(asset, RECIPE_PHOTO_MAX_EDGE, RECIPE_PHOTO_JPEG_QUALITY, 'processPhoto');
 
   try {
     const directory = photoDirectory();

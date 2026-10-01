@@ -30,7 +30,9 @@ export function Button({ label, onPress, variant = 'primary', disabled, style }:
         style,
       ]}
     >
-      <Text variant="bodyStrong" color={textColor}>
+      {/* Centered and allowed to wrap onto a second line rather than overflow
+          the button when a translation is longer (e.g. "Create account"). */}
+      <Text variant="bodyStrong" color={textColor} style={styles.label} numberOfLines={2}>
         {label}
       </Text>
     </Pressable>
@@ -43,6 +45,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
+  label: { textAlign: 'center' },
 });

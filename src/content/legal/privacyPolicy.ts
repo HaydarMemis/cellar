@@ -31,7 +31,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
           heading: 'Hesap oluşturduğunda işlenen veriler',
           paragraphs: ['Hesap oluşturduğunda veya tarif yayınladığında aşağıdaki veriler altyapı sağlayıcımız Supabase’e gönderilir:'],
           bullets: [
-            'Hesap: e-posta adresin, kullanıcı adın, görünen adın ve isteğe bağlı biyografin.',
+            'Hesap: e-posta adresin, kullanıcı adın, görünen adın, isteğe bağlı biyografin ve isteğe bağlı profil fotoğrafın.',
             'Kimlik doğrulama: şifreyle kaydolursan şifren Supabase tarafından özetlenmiş (hash) olarak saklanır; ham şifreni hiçbir zaman görmeyiz. Apple veya Google ile giriş yaparsan, sağlayıcının doğruladığı kullanıcı kimliğini ve paylaşmayı seçtiğin ad/e-postayı (Apple’ın “E-postamı Gizle” adresi dahil) alırız.',
             'Yayınlanan (herkese açık) tarifler: ad, açıklama, malzemeler, yöntem, adımlar ve eklediğin fotoğraf — uygulamayı kullanan herkes görebilir.',
             'Sosyal etkileşimler: takip ettiklerin, seni takip edenler, beğendiğin tarifler ve engellediğin kullanıcılar (engelleme listen yalnızca sana görünür).',
@@ -43,6 +43,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
           heading: 'Fotoğraflar',
           paragraphs: [
             'Bir tarife fotoğraf eklediğinde sistemin fotoğraf seçicisi kullanılır; uygulama yalnızca seçtiğin fotoğrafa erişir, fotoğraf arşivinin tamamına erişmez. Fotoğraf küçültülür ve cihazına kaydedilir. Gizli bir tarifteki fotoğraf cihazında kalır; yayınladığın bir tarifin fotoğrafı diğer kullanıcıların görebilmesi için depolama altyapımıza yüklenir.',
+            'İsteğe bağlı olarak bir profil fotoğrafı ekleyebilirsin. Profil fotoğrafı da aynı şekilde sistemin fotoğraf seçicisiyle seçilir; cihazında küçültülüp yeniden kodlanır (bu işlem konum gibi gömülü bilgileri de kaldırır) ve depolama altyapımıza yüklenir. Profil fotoğrafın, görünen adın ve kullanıcı adınla birlikte uygulamayı kullanan herkes tarafından görülebilir. Fotoğrafını istediğin zaman Profil → Profili düzenle bölümünden değiştirebilir veya kaldırabilirsin.',
           ],
         },
         {
@@ -70,7 +71,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
         {
           heading: 'Saklama süresi ve hesap silme',
           paragraphs: [
-            'Hesap verilerin hesabını silene kadar saklanır. Hesabını istediğin zaman uygulama içinden Profil → Hesabı sil ile kalıcı olarak silebilirsin. Bu işlem kimlik bilgilerini, profilini, yayınladığın tarifleri ve fotoğraflarını, beğenilerini, takiplerini ve engellemelerini sunucularımızdan siler; Apple ile giriş kullandıysan Cellar’ın Apple kimliğine erişimini de iptal eder. RevenueCat’ten de hesabına bağlı satın alma durumu kaydını silmesini isteriz; mağazadaki satın alma geçmişin Apple / Google’da kalır. Moderasyon kaydı olarak tutulan şikâyetler, seninle ilişkilendirilmeden saklanmaya devam eder. Silinen veriler sağlayıcılarımızın yedeklerinde sınırlı bir süre daha bulunabilir. Yalnızca cihazında tutulan veriler, uygulamayı silene kadar cihazında kalır.',
+            'Hesap verilerin hesabını silene kadar saklanır. Hesabını istediğin zaman uygulama içinden Profil → Hesabı sil ile kalıcı olarak silebilirsin. Bu işlem kimlik bilgilerini, profilini (profil fotoğrafın dahil), yayınladığın tarifleri ve fotoğraflarını, beğenilerini, takiplerini ve engellemelerini sunucularımızdan siler; Apple ile giriş kullandıysan Cellar’ın Apple kimliğine erişimini de iptal eder. RevenueCat’ten de hesabına bağlı satın alma durumu kaydını silmesini isteriz; mağazadaki satın alma geçmişin Apple / Google’da kalır. Moderasyon kaydı olarak tutulan şikâyetler, seninle ilişkilendirilmeden saklanmaya devam eder. Silinen veriler sağlayıcılarımızın yedeklerinde sınırlı bir süre daha bulunabilir. Yalnızca cihazında tutulan veriler, uygulamayı silene kadar cihazında kalır.',
           ],
         },
         {
@@ -113,7 +114,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
         heading: 'What we process if you create an account',
         paragraphs: ['Creating an account or publishing a recipe sends the following to our infrastructure provider, Supabase:'],
         bullets: [
-          'Account: your email address, username, display name and optional bio.',
+          'Account: your email address, username, display name, optional bio and optional profile photo.',
           'Authentication: if you sign up with a password, Supabase stores a securely hashed credential — we never see your raw password. If you sign in with Apple or Google, we receive the provider’s verified user ID and the name/email you choose to share (including an Apple “Hide My Email” relay address).',
           'Published (public) recipes: name, description, ingredients, method, steps and any photo you attach — visible to everyone using the app.',
           'Social activity: who you follow, who follows you, the recipes you like, and the users you block (your block list is visible only to you).',
@@ -125,6 +126,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
         heading: 'Photos',
         paragraphs: [
           'When you add a photo to a recipe, the system photo picker is used — the app only receives the photo you select, not your photo library. The photo is resized and saved on your device. A photo on a private recipe stays on your device; a photo on a recipe you publish is uploaded to our storage so other users can see it.',
+          'You can optionally add a profile photo. It is chosen the same way with the system photo picker, resized and re-encoded on your device (which also removes embedded metadata such as location), and uploaded to our storage. Your profile photo is visible to everyone using the app, together with your display name and username. You can change or remove it at any time under Profile → Edit profile.',
         ],
       },
       {
@@ -152,7 +154,7 @@ export function getPrivacyPolicy(locale: Locale = 'en'): LegalDoc {
       {
         heading: 'Retention and account deletion',
         paragraphs: [
-          'Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile, published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. We also ask RevenueCat to delete the purchase-status record linked to your account; the store’s own purchase history stays with Apple / Google. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.',
+          'Account data is kept until you delete your account. You can permanently delete it at any time in the app under Profile → Delete account. This deletes your sign-in identity, profile (including your profile photo), published recipes and their photos, likes, follows and blocks from our servers, and — if you use Sign in with Apple — revokes Cellar’s access to your Apple ID. We also ask RevenueCat to delete the purchase-status record linked to your account; the store’s own purchase history stays with Apple / Google. Reports kept as moderation records are retained without being linked to you. Deleted data may remain in our providers’ backups for a limited period. Data kept only on your device stays there until you delete the app.',
         ],
       },
       {

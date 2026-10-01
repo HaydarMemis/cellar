@@ -45,7 +45,7 @@ Create these for the **production** and **preview** environments (`eas.json` alr
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | the anon (public) key |
 | `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `…_ANDROID_API_KEY` | RevenueCat public app keys |
 | `EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED` | `true` (after the Supabase Apple provider is on) |
-| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME` | from Google Cloud (below) |
+| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | from Google Cloud (below) |
 | `EXPO_PUBLIC_SENTRY_DSN` (+ `SENTRY_ORG`, `SENTRY_PROJECT`, secret `SENTRY_AUTH_TOKEN`) | optional but recommended |
 | `EXPO_PUBLIC_LEGAL_*`, `EXPO_PUBLIC_SUPPORT_EMAIL`, `EXPO_PUBLIC_*_URL` | see §2 Legal |
 
@@ -95,7 +95,7 @@ Bundle id / package is `com.ecclesia.coctail`. Decide it is final **before** the
 ### Google Cloud Console
 Create OAuth clients:
 - A **Web application** client. Its id goes in `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` and in Supabase.
-- An **iOS** client (bundle `com.ecclesia.coctail`). Its id goes in `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`; the reversed id goes in `EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME`.
+- An **iOS** client (bundle `com.ecclesia.coctail`). Its id goes in `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`; the reversed id (Info.plist URL scheme) is derived from it by `app.config.js`.
 - An **Android** client (package `com.ecclesia.coctail` plus the SHA-1 of **both** the EAS upload key and the Play app-signing key).
 
 Configure the OAuth consent screen: app name, support email, privacy policy URL. Publish it to Production.

@@ -101,6 +101,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#0002',
+    borderBottomColor: 'rgba(128,128,128,0.2)', // visible in light and dark mode
   },
 });

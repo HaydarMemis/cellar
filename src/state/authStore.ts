@@ -14,7 +14,10 @@ import {
   SocialAuthResult,
   socialAuthProvider,
 } from '../data/community';
+import { discardProcessedAvatar, prepareAvatarPhoto } from '../data/localMedia';
+import { AvatarError, isAvatarUploadAvailable, removeAvatarObject, uploadAvatar } from '../data/supabase/avatarUpload';
 import { AuthSession, LOCAL_GUEST_OWNER_ID, UserProfile } from '../domain/types';
+import { recordAuthDiagnostic } from '../lib/authDiagnostics';
 import { reportError, setCrashReportingUser } from '../lib/crashReporting';
 import { clearAccountScopedLocalData, reloadAccountScopedLocalData } from './accountScope';
 import { useCommunityStore } from './communityStore';
@@ -351,6 +354,22 @@ interface AuthState {
   updatePassword: (newPassword: string) => Promise<PasswordResetOutcome>;
   updateProfile: (patch: ProfilePatch) => Promise<void>;
   /**
+   * Profile photo: processes the picked photo (≤512 px JPEG, EXIF/GPS
+   * dropped — never the original), uploads it to `avatars/<id>/avatar` and
+   * saves its URL on the profile; the store and the offline profile cache
+   * update only on success. Throws AvatarError (offline / too-large /
+   * processing-failed / upload-failed / not-available); on any failure the
+   * profile keeps its previous photo.
+   */
+  setAvatarPhoto: (asset: { uri: string; width?: number; height?: number }) => Promise<void>;
+  /**
+   * Removes the profile photo: deletes the Storage object FIRST, then clears
+   * avatar_url — so a failure half-way leaves the photo visibly still set
+   * (and the action retryable) instead of a public object nobody references.
+   * Throws AvatarError.
+   */
+  removeAvatarPhoto: () => Promise<void>;
+  /**
    * Deletes the account on the backend first; only if that succeeds,
    * runs `afterRemoteDeletion(deletedUserId)` (the delete-account screen
    * passes the local re-homing of recipes/favorites/inventory/journal/
@@ -447,6 +466,40 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ profile: updated });
       await writeCachedProfile(updated);
     }
+  },
+
+  setAvatarPhoto: async (asset) => {
+    const current = get().profile;
+    if (!current || !isAvatarUploadAvailable()) throw new AvatarError('Profile photos are not available', 'not-available');
+    let processed: string;
+    try {
+      processed = await prepareAvatarPhoto(asset);
+    } catch (e) {
+      recordAuthDiagnostic('avatarProcess', e);
+      throw new AvatarError('Could not process the selected photo', 'processing-failed');
+    }
+    try {
+      const avatarUrl = await uploadAvatar(current.id, processed);
+      const updated = await authBackend.updateProfile(current.id, { avatarUrl });
+      if (!updated) throw new AvatarError('Could not save the profile photo', 'upload-failed');
+      // Signed out / switched accounts while uploading: don't resurrect the old identity.
+      if (get().profile?.id !== current.id) return;
+      set({ profile: updated });
+      await writeCachedProfile(updated);
+    } finally {
+      discardProcessedAvatar(processed);
+    }
+  },
+
+  removeAvatarPhoto: async () => {
+    const current = get().profile;
+    if (!current || !isAvatarUploadAvailable()) throw new AvatarError('Profile photos are not available', 'not-available');
+    await removeAvatarObject(current.id);
+    const updated = await authBackend.updateProfile(current.id, { avatarUrl: null });
+    if (!updated) throw new AvatarError('Could not update the profile', 'upload-failed');
+    if (get().profile?.id !== current.id) return;
+    set({ profile: updated });
+    await writeCachedProfile(updated);
   },
 
   deleteAccount: (afterRemoteDeletion, options) =>

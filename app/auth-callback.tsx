@@ -90,7 +90,10 @@ export default function AuthCallbackScreen() {
         </Text>
         <Button
           label={t(signedIn ? 'common.done' : 'auth.signInAction')}
-          onPress={() => router.replace(signedIn ? '/(tabs)' : '/auth')}
+          // dismissTo, not replace: the link usually arrives while the
+          // sign-up "check your email" modal is still open underneath —
+          // replace would leave that stale screen in the stack behind the app.
+          onPress={() => (signedIn ? router.dismissTo('/(tabs)') : router.replace('/auth'))}
           style={{ marginTop: 24 }}
         />
       </View>

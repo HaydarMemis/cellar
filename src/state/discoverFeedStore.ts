@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { remoteRecipeBackend } from '../data/community';
 import { PersonalRecipe } from '../domain/types';
+import { discoverErrorReference } from '../lib/authDiagnostics';
 import { reportError } from '../lib/crashReporting';
 
 const PAGE_SIZE = 20;
@@ -10,6 +11,8 @@ interface DiscoverFeedState {
   isLoading: boolean;
   /** True only for a genuine backend failure — an empty community is not an error (see Discover's empty state). */
   hasError: boolean;
+  /** Safe, traceable code for the last failure (e.g. "discover-401") — never message text or tokens. Null when no error. */
+  errorReference: string | null;
   nextCursor: string | null;
   /**
    * Every published recipe this session has seen from the backend (feed
@@ -60,6 +63,7 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>((set, get) => ({
   recipes: [],
   isLoading: false,
   hasError: false,
+  errorReference: null,
   nextCursor: null,
   byId: {},
 
@@ -67,7 +71,7 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>((set, get) => ({
     if (!remoteRecipeBackend) return;
     const generation = ++loadGeneration;
     knownMissing.clear();
-    set({ isLoading: true, hasError: false });
+    set({ isLoading: true, hasError: false, errorReference: null });
     try {
       const page = await remoteRecipeBackend.fetchPublicRecipesPage(null, PAGE_SIZE);
       if (generation !== loadGeneration) return;
@@ -77,7 +81,7 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>((set, get) => ({
       if (generation !== loadGeneration) return;
       // Keep whatever was already on screen rather than blanking the feed
       // out from under the user on a transient network failure.
-      set({ isLoading: false, hasError: true });
+      set({ isLoading: false, hasError: true, errorReference: discoverErrorReference(e) });
     }
   },
 
@@ -98,7 +102,7 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>((set, get) => ({
     } catch (e) {
       reportError(e, { module: 'discoverFeedStore', action: 'loadMore' });
       if (generation !== loadGeneration) return;
-      set({ isLoading: false, hasError: true });
+      set({ isLoading: false, hasError: true, errorReference: discoverErrorReference(e) });
     }
   },
 

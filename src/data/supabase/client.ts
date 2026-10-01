@@ -20,7 +20,49 @@ import { AppState, Platform } from 'react-native';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-export const isSupabaseConfigured = !!supabaseUrl && !!supabaseAnonKey;
+export type SupabaseKeyKind = 'legacy-anon-jwt' | 'publishable' | 'secret' | 'service-role-jwt' | 'invalid' | 'missing';
+
+/**
+ * Classifies the client API key WITHOUT exposing it. Supabase accepts two
+ * public client key formats: the legacy "anon" JWT (eyJ…, role "anon") and
+ * the new publishable key (sb_publishable_…). Anything else is rejected by
+ * the Supabase gateway with 401 "Invalid API key" on EVERY request — which
+ * the auth screens can only show as a generic failure.
+ */
+export function classifySupabaseKey(key: string | undefined): SupabaseKeyKind {
+  const k = (key ?? '').trim();
+  if (!k) return 'missing';
+  if (k.startsWith('sb_publishable_')) return 'publishable';
+  if (k.startsWith('sb_secret_')) return 'secret';
+  const parts = k.split('.');
+  if (k.startsWith('eyJ') && parts.length === 3) {
+    try {
+      const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const json = JSON.parse(globalThis.atob ? globalThis.atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, '=')) : '{}') as { role?: unknown };
+      if (json.role === 'service_role') return 'service-role-jwt';
+      return 'legacy-anon-jwt';
+    } catch {
+      return 'invalid';
+    }
+  }
+  return 'invalid';
+}
+
+export const supabaseKeyKind = classifySupabaseKey(supabaseAnonKey);
+
+// A secret / service-role key must never be used by the app (it bypasses
+// Row Level Security). Refuse it outright rather than run with it.
+const isForbiddenKey = supabaseKeyKind === 'secret' || supabaseKeyKind === 'service-role-jwt';
+if (isForbiddenKey) {
+  console.error('[Cellar] EXPO_PUBLIC_SUPABASE_ANON_KEY is a SECRET/service-role key. It must never ship in the app — Supabase is disabled for this build. Use the anon / publishable key and rotate the leaked secret key.');
+} else if (supabaseKeyKind === 'invalid') {
+  // Never log the value — only that its format is wrong.
+  console.error(
+    '[Cellar] EXPO_PUBLIC_SUPABASE_ANON_KEY is not a Supabase client key (expected the legacy anon JWT "eyJ…" or a publishable key "sb_publishable_…"). Every Supabase request will fail with 401 "Invalid API key". Copy the full key from Dashboard → Project Settings → API Keys and rebuild.',
+  );
+}
+
+export const isSupabaseConfigured = !!supabaseUrl && !!supabaseAnonKey && !isForbiddenKey;
 
 /**
  * AsyncStorage (not expo-sqlite's localStorage shim, which Expo's own docs

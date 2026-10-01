@@ -38,6 +38,9 @@
 --   bucket at exactly `<owner_id>/<recipe_id>/(photo|video)`, enforced by
 --   storage.objects RLS; only the owner can list their own objects, and a
 --   recipe's photo_url/video_url must point at its owner's own object.
+-- * Optional profile photos live in the public `avatars` bucket at exactly
+--   `<user_id>/avatar` (same RLS model); profiles.avatar_url must be null or
+--   the owner's own avatar object URL.
 -- * Timestamps (created_at everywhere, recipes.updated_at), recipes.id and
 --   recipes.owner_id, and reports.status on insert are server-owned
 --   (BEFORE triggers) — whatever the client sends is overwritten.
@@ -650,3 +653,64 @@ $$;
 
 revoke all on function public.apply_subscriber_state(uuid, boolean, text, text, text, timestamptz) from public, anon, authenticated;
 grant execute on function public.apply_subscriber_state(uuid, boolean, text, text, text, timestamptz) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- 20260928120000_profile_avatars.sql (see that file for rationale)
+-- ---------------------------------------------------------------------------
+
+-- profiles.avatar_url: null or the owner's OWN public avatar object URL
+-- (+ optional ?v=<epoch ms>). A CUSTOM DOMAIN for Storage requires updating
+-- profile_avatar_url_ok in a new migration.
+create or replace function public.profile_avatar_url_ok(url text, profile_id uuid)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select url ~ (
+    '^https://[a-z0-9]{20}\.supabase\.co/storage/v1/object/public/avatars/'
+    || profile_id::text || '/avatar(\?v=[0-9]+)?$'
+  );
+$$;
+
+alter table public.profiles
+  add column if not exists avatar_url text
+    constraint profiles_avatar_url_own_object check (avatar_url is null or public.profile_avatar_url_ok(avatar_url, id));
+
+-- Storage: avatars bucket (public URLs, owner-only listing, exact-path writes)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 5242880, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+create policy "a user can list only their own avatar"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "a user can upload only their own avatar"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'avatars'
+    and name = auth.uid()::text || '/avatar'
+    and exists (select 1 from public.profiles p where p.id = auth.uid())
+  );
+create policy "a user can replace only their own avatar"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'avatars' and name = auth.uid()::text || '/avatar')
+  with check (
+    bucket_id = 'avatars'
+    and name = auth.uid()::text || '/avatar'
+    and exists (select 1 from public.profiles p where p.id = auth.uid())
+  );
+create policy "a user can delete only their own avatar"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'avatars'
+    and name = auth.uid()::text || '/avatar'
+    and exists (select 1 from public.profiles p where p.id = auth.uid())
+  );

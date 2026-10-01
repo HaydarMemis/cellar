@@ -81,6 +81,28 @@ describe('sign-up', () => {
   });
 });
 
+describe('confirmation email delivery', () => {
+  it('a sign-up whose confirmation email could not be sent is reported as such (not as a connection problem)', async () => {
+    mockAuth.signUp.mockResolvedValue({ data: { user: null, session: null }, error: new AuthApiError('Error sending confirmation email', 500, 'unexpected_failure') });
+    expect(await supabaseAuthBackend.signUp(signUpInput)).toEqual({ ok: false, error: 'email-send-failed' });
+  });
+
+  it('resend: success, rate-limited (email already sent moments ago), network and other errors are distinguished', async () => {
+    mockAuth.resend.mockResolvedValue({ data: {}, error: null });
+    expect(await supabaseAuthBackend.resendConfirmationEmail('Alice@Example.com')).toEqual({ ok: true });
+    expect(mockAuth.resend).toHaveBeenCalledWith({ type: 'signup', email: 'alice@example.com', options: { emailRedirectTo: 'cellar://auth-callback' } });
+
+    mockAuth.resend.mockResolvedValue({ data: null, error: new AuthApiError('For security purposes, you can only request this after 52 seconds.', 429, 'over_email_send_rate_limit') });
+    expect(await supabaseAuthBackend.resendConfirmationEmail('a@example.com')).toEqual({ ok: false, error: 'rate-limited' });
+
+    mockAuth.resend.mockResolvedValue({ data: null, error: new AuthApiError('Email rate limit exceeded', 429, 'over_email_send_rate_limit') });
+    expect(await supabaseAuthBackend.resendConfirmationEmail('a@example.com')).toEqual({ ok: false, error: 'rate-limited' });
+
+    mockAuth.resend.mockResolvedValue({ data: null, error: new AuthApiError('Something odd', 400, 'validation_failed') });
+    expect(await supabaseAuthBackend.resendConfirmationEmail('a@example.com')).toEqual({ ok: false, error: 'unknown' });
+  });
+});
+
 describe('sign-in', () => {
   it('wrong password and unknown address produce the same generic error', async () => {
     mockAuth.signInWithPassword.mockResolvedValue({

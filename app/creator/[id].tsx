@@ -13,6 +13,7 @@ import { EmptyState } from '../../src/ui/components/EmptyState';
 import { RecipeFeedRow } from '../../src/ui/components/RecipeFeedRow';
 import { ReportModal } from '../../src/ui/components/ReportModal';
 import { Screen } from '../../src/ui/components/Screen';
+import { NotFoundState } from '../../src/ui/components/NotFoundState';
 import { SectionLabel } from '../../src/ui/components/SectionLabel';
 import { Text } from '../../src/ui/components/Text';
 import { useAuthStore } from '../../src/state/authStore';
@@ -87,13 +88,7 @@ export default function CreatorProfileScreen() {
   const creatorsById = useMemo(() => (profile ? new Map([[profile.id, profile]]) : new Map()), [profile]);
 
   if (profile === undefined) {
-    return (
-      <Screen>
-        <View style={[styles.notFound, { paddingTop: insets.top + 40 }]}>
-          <Text variant="headline">{t('creatorProfile.notFound')}</Text>
-        </View>
-      </Screen>
-    );
+    return <NotFoundState message={t('creatorProfile.notFound')} />;
   }
 
   const isSelf = myUserId === id;
@@ -200,7 +195,7 @@ export default function CreatorProfileScreen() {
         ListHeaderComponent={
           profile ? (
             <View style={styles.profileHeader}>
-              <Avatar seed={profile.id} label={profile.displayName} size={72} />
+              <Avatar seed={profile.id} label={profile.displayName} size={72} uri={profile.avatarUrl} />
               <Text variant="title" style={{ marginTop: 12 }}>
                 {profile.displayName}
               </Text>

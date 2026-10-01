@@ -4,6 +4,8 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, V
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ingredients } from '../../src/data/catalog';
 import { authBackend, remoteRecipeBackend } from '../../src/data/community';
+import { supabaseKeyKind } from '../../src/data/supabase/client';
+import { INVALID_SUPABASE_KEY_REFERENCE } from '../../src/lib/authDiagnostics';
 import { getSpiritGroup, SpiritGroup, spiritGroupIds } from '../../src/domain/spiritGroups';
 import { UserProfile } from '../../src/domain/types';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -63,6 +65,7 @@ export default function DiscoverScreen() {
   );
   const feedIsLoading = useDiscoverFeedStore((s) => s.isLoading);
   const feedHasError = useDiscoverFeedStore((s) => s.hasError);
+  const feedErrorReference = useDiscoverFeedStore((s) => s.errorReference);
 
   // Blocking is client-side content filtering layered on top of whichever
   // source is active (the database also enforces it for *interactions* — see
@@ -85,7 +88,10 @@ export default function DiscoverScreen() {
     // setState here, which the lint rule (rightly) flags as a cascading-
     // render risk; letting it go through the same async path keeps this
     // effect to one clear responsibility.
-    authBackend.getProfilesByIds(ownerIds).then((profiles) => setCreatorsById(new Map(profiles.map((p) => [p.id, p]))));
+    authBackend
+      .getProfilesByIds(ownerIds)
+      .then((profiles) => setCreatorsById(new Map(profiles.map((p) => [p.id, p]))))
+      .catch(() => undefined); // creator names are optional decoration; the feed still renders
   }, [publicRecipes]);
 
   useEffect(() => {
@@ -155,7 +161,10 @@ export default function DiscoverScreen() {
           <EmptyState
             icon="cloud-offline-outline"
             title={t('discover.loadFailedTitle')}
-            message={t('discover.loadFailedMessage')}
+            message={[
+              t('discover.loadFailedMessage'),
+              t('common.errorReference', { code: supabaseKeyKind === 'invalid' ? INVALID_SUPABASE_KEY_REFERENCE : (feedErrorReference ?? 'discover') }),
+            ].join('\n\n')}
             actionLabel={t('common.tryAgain')}
             onAction={loadRemoteFeed}
           />

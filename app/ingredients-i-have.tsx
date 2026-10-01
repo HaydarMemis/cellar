@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     minHeight: 44,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#0002',
+    borderBottomColor: 'rgba(128,128,128,0.2)', // visible in light and dark mode
   },
   resultsContent: { paddingHorizontal: 20, paddingBottom: 40 },
   resultsTitle: { marginBottom: 20 },

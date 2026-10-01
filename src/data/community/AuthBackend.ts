@@ -33,6 +33,8 @@ export type AuthErrorCode =
   | 'email-not-confirmed'
   | 'rate-limited'
   | 'network-error'
+  /** Supabase could not send the confirmation email (SMTP failure); no account was created. */
+  | 'email-send-failed'
   | 'unknown';
 
 export type AuthResult = { ok: true; profile: UserProfile } | { ok: false; error: AuthErrorCode };
@@ -76,7 +78,10 @@ export class SessionInvalidError extends Error {
   }
 }
 
-export type ProfilePatch = Partial<Pick<UserProfile, 'displayName' | 'bio' | 'avatarColorSeed'>>;
+export type ProfilePatch = Partial<Pick<UserProfile, 'displayName' | 'bio' | 'avatarColorSeed'>> & {
+  /** A new profile photo URL, or `null` to remove the photo. Omitted = unchanged. */
+  avatarUrl?: string | null;
+};
 
 /**
  * Auth as this build actually ships it: real account creation, login,
@@ -333,8 +338,15 @@ export const localAuthBackend: AuthBackend = {
     await accountsStore.update((accounts) =>
       accounts.map((a) => {
         if (a.profile.id !== userId) return a;
-        updated = { ...a.profile, ...patch };
-        return { ...a, profile: updated };
+        // `avatarUrl: null` means "remove the photo". The local dev backend
+        // never offers photo upload (app/edit-profile.tsx hides it without
+        // Supabase), but it stores/clears the field faithfully.
+        const { avatarUrl, ...rest } = patch;
+        const next: UserProfile = { ...a.profile, ...rest };
+        if (avatarUrl === null) delete next.avatarUrl;
+        else if (avatarUrl !== undefined) next.avatarUrl = avatarUrl;
+        updated = next;
+        return { ...a, profile: next };
       }),
     );
     return updated;

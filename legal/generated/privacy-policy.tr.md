@@ -12,7 +12,7 @@ Katalogda gezinme, arama, filtreler, malzeme eşleştirme, favoriler, Barım, ta
 
 Hesap oluşturduğunda veya tarif yayınladığında aşağıdaki veriler altyapı sağlayıcımız Supabase’e gönderilir:
 
-- Hesap: e-posta adresin, kullanıcı adın, görünen adın ve isteğe bağlı biyografin.
+- Hesap: e-posta adresin, kullanıcı adın, görünen adın, isteğe bağlı biyografin ve isteğe bağlı profil fotoğrafın.
 - Kimlik doğrulama: şifreyle kaydolursan şifren Supabase tarafından özetlenmiş (hash) olarak saklanır; ham şifreni hiçbir zaman görmeyiz. Apple veya Google ile giriş yaparsan, sağlayıcının doğruladığı kullanıcı kimliğini ve paylaşmayı seçtiğin ad/e-postayı (Apple’ın “E-postamı Gizle” adresi dahil) alırız.
 - Yayınlanan (herkese açık) tarifler: ad, açıklama, malzemeler, yöntem, adımlar ve eklediğin fotoğraf — uygulamayı kullanan herkes görebilir.
 - Sosyal etkileşimler: takip ettiklerin, seni takip edenler, beğendiğin tarifler ve engellediğin kullanıcılar (engelleme listen yalnızca sana görünür).
@@ -22,6 +22,8 @@ Hesap oluşturduğunda veya tarif yayınladığında aşağıdaki veriler altyap
 ## Fotoğraflar
 
 Bir tarife fotoğraf eklediğinde sistemin fotoğraf seçicisi kullanılır; uygulama yalnızca seçtiğin fotoğrafa erişir, fotoğraf arşivinin tamamına erişmez. Fotoğraf küçültülür ve cihazına kaydedilir. Gizli bir tarifteki fotoğraf cihazında kalır; yayınladığın bir tarifin fotoğrafı diğer kullanıcıların görebilmesi için depolama altyapımıza yüklenir.
+
+İsteğe bağlı olarak bir profil fotoğrafı ekleyebilirsin. Profil fotoğrafı da aynı şekilde sistemin fotoğraf seçicisiyle seçilir; cihazında küçültülüp yeniden kodlanır (bu işlem konum gibi gömülü bilgileri de kaldırır) ve depolama altyapımıza yüklenir. Profil fotoğrafın, görünen adın ve kullanıcı adınla birlikte uygulamayı kullanan herkes tarafından görülebilir. Fotoğrafını istediğin zaman Profil → Profili düzenle bölümünden değiştirebilir veya kaldırabilirsin.
 
 ## Hata raporları
 
@@ -44,7 +46,7 @@ Cellar reklam göstermez, üçüncü taraf analiz veya izleme araçları kullanm
 
 ## Saklama süresi ve hesap silme
 
-Hesap verilerin hesabını silene kadar saklanır. Hesabını istediğin zaman uygulama içinden Profil → Hesabı sil ile kalıcı olarak silebilirsin. Bu işlem kimlik bilgilerini, profilini, yayınladığın tarifleri ve fotoğraflarını, beğenilerini, takiplerini ve engellemelerini sunucularımızdan siler; Apple ile giriş kullandıysan Cellar’ın Apple kimliğine erişimini de iptal eder. RevenueCat’ten de hesabına bağlı satın alma durumu kaydını silmesini isteriz; mağazadaki satın alma geçmişin Apple / Google’da kalır. Moderasyon kaydı olarak tutulan şikâyetler, seninle ilişkilendirilmeden saklanmaya devam eder. Silinen veriler sağlayıcılarımızın yedeklerinde sınırlı bir süre daha bulunabilir. Yalnızca cihazında tutulan veriler, uygulamayı silene kadar cihazında kalır.
+Hesap verilerin hesabını silene kadar saklanır. Hesabını istediğin zaman uygulama içinden Profil → Hesabı sil ile kalıcı olarak silebilirsin. Bu işlem kimlik bilgilerini, profilini (profil fotoğrafın dahil), yayınladığın tarifleri ve fotoğraflarını, beğenilerini, takiplerini ve engellemelerini sunucularımızdan siler; Apple ile giriş kullandıysan Cellar’ın Apple kimliğine erişimini de iptal eder. RevenueCat’ten de hesabına bağlı satın alma durumu kaydını silmesini isteriz; mağazadaki satın alma geçmişin Apple / Google’da kalır. Moderasyon kaydı olarak tutulan şikâyetler, seninle ilişkilendirilmeden saklanmaya devam eder. Silinen veriler sağlayıcılarımızın yedeklerinde sınırlı bir süre daha bulunabilir. Yalnızca cihazında tutulan veriler, uygulamayı silene kadar cihazında kalır.
 
 ## Yaş
 

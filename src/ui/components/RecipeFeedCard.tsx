@@ -64,7 +64,7 @@ export function RecipeFeedCard({
 
         <View style={styles.topRow}>
           <Pressable onPress={onOpenCreator} accessibilityRole="button" style={styles.creatorChip} hitSlop={4}>
-            <Avatar seed={author?.id ?? recipe.ownerId} label={author?.displayName ?? '?'} size={22} />
+            <Avatar seed={author?.id ?? recipe.ownerId} label={author?.displayName ?? '?'} size={22} uri={author?.avatarUrl} />
             <Text variant="caption" style={styles.creatorName} numberOfLines={1}>
               {author?.displayName ?? ''}
             </Text>

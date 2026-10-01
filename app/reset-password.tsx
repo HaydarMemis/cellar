@@ -112,7 +112,7 @@ export default function ResetPasswordScreen() {
           <Text variant="body" color="secondary" style={styles.centerMessage}>
             {t('auth.resetPasswordSuccessMessage')}
           </Text>
-          <Button label={t('common.done')} onPress={() => router.replace('/(tabs)')} style={{ marginTop: 24 }} />
+          <Button label={t('common.done')} onPress={() => router.dismissTo('/(tabs)')} style={{ marginTop: 24 }} />
         </View>
       </Screen>
     );

@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { Platform } from 'react-native';
+import { AUTH_DIAGNOSTICS_ENABLED, describeGoogleIdToken, recordAuthDiagnostic } from '../../lib/authDiagnostics';
 import { reportError } from '../../lib/crashReporting';
 import { SocialAuthMethod, SocialAuthProvider, SocialAuthResult } from '../community/SocialAuthProvider';
 import { supabase } from './client';
@@ -24,8 +25,8 @@ import { createProfileOnFirstSignIn } from './SupabaseAuthBackend';
  * the WEB client id → Supabase. Google no longer allows custom-scheme
  * redirects for new OAuth clients, which is why this uses the native SDK
  * rather than a browser redirect. Needs EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
- * and on iOS EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID + EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME
- * (the reversed iOS client id, wired into Info.plist by app.config.js).
+ * and on iOS EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID (app.config.js derives the
+ * reversed id from it and wires it into Info.plist as a URL scheme).
  *
  * Account linking: Supabase links an Apple/Google identity to an existing
  * account automatically when the provider's verified email matches. An
@@ -50,8 +51,20 @@ async function makeNoncePair(): Promise<{ raw: string; hashed: string }> {
   return { raw, hashed };
 }
 
+/**
+ * Whether this build was generated WITH the Sign in with Apple entitlement
+ * (see app.config.js). `EXPO_PUBLIC_APPLE_NATIVE_CAPABILITY_ENABLED=false`
+ * means the entitlement was left out (e.g. a development build on a team
+ * outside the Apple Developer Program): the native sheet would fail, so the
+ * feature stays off regardless of EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED. Unset
+ * = capability present (the normal production configuration).
+ */
+export function isAppleNativeCapabilityEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_APPLE_NATIVE_CAPABILITY_ENABLED !== 'false';
+}
+
 export function isAppleSignInEnabled(): boolean {
-  return Platform.OS === 'ios' && process.env.EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED === 'true';
+  return Platform.OS === 'ios' && process.env.EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED === 'true' && isAppleNativeCapabilityEnabled();
 }
 
 export function googleClientConfig(): { webClientId: string; iosClientId?: string } | null {
@@ -59,8 +72,9 @@ export function googleClientConfig(): { webClientId: string; iosClientId?: strin
   if (!webClientId) return null;
   if (Platform.OS === 'ios') {
     const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
-    // Without the URL scheme in Info.plist the native SDK crashes on sign-in.
-    if (!iosClientId || !process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME) return null;
+    // The Info.plist URL scheme is derived from this same id at prebuild
+    // (app.config.js), so the native SDK's required scheme always matches.
+    if (!iosClientId || !iosClientId.trim().endsWith('.apps.googleusercontent.com')) return null;
     return { webClientId, iosClientId };
   }
   if (Platform.OS === 'android') return { webClientId };
@@ -109,6 +123,7 @@ async function finishSignIn(
     return { ok: true, profile };
   } catch (e) {
     reportError(e, { module: 'SupabaseSocialAuthProvider', action });
+    recordAuthDiagnostic(action, e); // TEMPORARY auth diagnostics
     // Don't leave a half-signed-in session behind with no profile. Local
     // scope: this device only — a global sign-out would also revoke the
     // person's sessions on their other devices.
@@ -137,13 +152,18 @@ async function signInWithApple(): Promise<SocialAuthResult> {
     const code = (e as { code?: string } | undefined)?.code;
     if (code === 'ERR_REQUEST_CANCELED' || code === 'ERR_CANCELED') return { ok: false, error: 'cancelled' };
     reportError(e, { module: 'SupabaseSocialAuthProvider', action: 'appleSignInAsync' });
+    recordAuthDiagnostic('appleSignInAsync', e); // TEMPORARY auth diagnostics
     return { ok: false, error: 'failed' };
   }
-  if (!credential.identityToken) return { ok: false, error: 'failed' };
+  if (!credential.identityToken) {
+    recordAuthDiagnostic('appleSignInAsync', new Error('Apple returned no identity token')); // TEMPORARY auth diagnostics
+    return { ok: false, error: 'failed' };
+  }
 
   const { data, error } = await client().auth.signInWithIdToken({ provider: 'apple', token: credential.identityToken, nonce: rawNonce });
   if (error || !data.user) {
     reportError(error ?? new Error('signInWithIdToken returned no user'), { module: 'SupabaseSocialAuthProvider', action: 'appleIdTokenExchange' });
+    recordAuthDiagnostic('appleIdTokenExchange', error ?? new Error('signInWithIdToken returned no user')); // TEMPORARY auth diagnostics
     return { ok: false, error: error && (error.status ?? 0) >= 500 ? 'network' : 'failed' };
   }
 
@@ -174,9 +194,13 @@ async function signInWithGoogle(): Promise<SocialAuthResult> {
       if (e.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) return { ok: false, error: 'not-configured' };
     }
     reportError(e, { module: 'SupabaseSocialAuthProvider', action: 'googleSignIn' });
+    recordAuthDiagnostic('googleSignIn', e); // TEMPORARY auth diagnostics
     return { ok: false, error: 'failed' };
   }
-  if (!idToken) return { ok: false, error: 'failed' };
+  if (!idToken) {
+    recordAuthDiagnostic('googleSignIn', new Error('Google returned no ID token')); // TEMPORARY auth diagnostics
+    return { ok: false, error: 'failed' };
+  }
 
   // No nonce here, deliberately: @react-native-google-signin/google-signin
   // v16's free API (GoogleSignin.signIn) accepts only `loginHint` — there is
@@ -187,6 +211,14 @@ async function signInWithGoogle(): Promise<SocialAuthResult> {
   const { data, error } = await client().auth.signInWithIdToken({ provider: 'google', token: idToken });
   if (error || !data.user) {
     reportError(error ?? new Error('signInWithIdToken returned no user'), { module: 'SupabaseSocialAuthProvider', action: 'googleIdTokenExchange' });
+    // TEMPORARY auth diagnostics: also which client the token was issued
+    // for and whether it carries a nonce — the two usual reasons Supabase
+    // rejects a native Google ID token (Client IDs / "Skip nonce checks").
+    recordAuthDiagnostic(
+      'googleIdTokenExchange',
+      error ?? new Error('signInWithIdToken returned no user'),
+      AUTH_DIAGNOSTICS_ENABLED ? describeGoogleIdToken(idToken, { webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }) : undefined,
+    );
     await GoogleSignin.signOut().catch(() => undefined);
     return { ok: false, error: error && (error.status ?? 0) >= 500 ? 'network' : 'failed' };
   }

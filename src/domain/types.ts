@@ -280,6 +280,12 @@ export interface UserProfile {
   displayName: string;
   bio?: string;
   avatarColorSeed: string;
+  /**
+   * Optional profile photo: the public, cache-busted (`?v=<ms>`) URL of the
+   * user's own `avatars/<id>/avatar` Storage object (see
+   * src/data/supabase/avatarUpload.ts). Absent = the monogram avatar.
+   */
+  avatarUrl?: string;
   createdAt: string;
 }
 

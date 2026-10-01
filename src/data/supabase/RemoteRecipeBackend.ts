@@ -136,10 +136,11 @@ async function fetchPage(ownerId: string | null, cursor: string | null, limit: n
     // with page depth) into an index range scan on (created_at desc, id desc).
     query = query.lte('created_at', decoded.createdAt).or(afterCursorFilter(decoded));
   }
-  const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit);
+  const { data, error, status } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit);
   if (error) {
     reportError(error, { module: 'RemoteRecipeBackend', action });
-    throw error;
+    // HTTP status rides along so the feed can show a traceable error code (e.g. discover-401).
+    throw Object.assign(error, { status });
   }
   const recipes = (data ?? []).map(toPersonalRecipe);
   const last = recipes[recipes.length - 1];
@@ -242,10 +243,10 @@ export const supabaseRemoteRecipeBackend: RemoteRecipeBackend = {
 
   async fetchRecipeById(recipeId) {
     if (!isUuid(recipeId)) return undefined; // can't be a remote row; also avoids a guaranteed 22P02
-    const { data, error } = await client().from('recipes').select('*').eq('id', recipeId).maybeSingle();
+    const { data, error, status } = await client().from('recipes').select('*').eq('id', recipeId).maybeSingle();
     if (error) {
       reportError(error, { module: 'RemoteRecipeBackend', action: 'fetchRecipeById', recipeId });
-      throw error;
+      throw Object.assign(error, { status });
     }
     return data ? toPersonalRecipe(data as RecipeRow) : undefined;
   },

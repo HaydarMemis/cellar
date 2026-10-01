@@ -13,7 +13,7 @@ function recipe(id: string) {
 
 describe('useDiscoverFeedStore', () => {
   beforeEach(() => {
-    useDiscoverFeedStore.setState({ recipes: [], isLoading: false, hasError: false, nextCursor: null });
+    useDiscoverFeedStore.setState({ recipes: [], isLoading: false, hasError: false, errorReference: null, nextCursor: null });
     mockFetchPublicRecipesPage.mockReset();
   });
 
@@ -33,6 +33,18 @@ describe('useDiscoverFeedStore', () => {
     const state = useDiscoverFeedStore.getState();
     expect(state.hasError).toBe(true);
     expect(state.isLoading).toBe(false);
+  });
+
+  it('a failed load records a safe error reference (step-status-code), never the message', async () => {
+    mockFetchPublicRecipesPage.mockRejectedValueOnce(Object.assign(new Error('Invalid API key sb_secret_abcdefghijklmnopqrstuvwxyz'), { status: 401 }));
+    await useDiscoverFeedStore.getState().load();
+    expect(useDiscoverFeedStore.getState().errorReference).toBe('discover-401');
+    mockFetchPublicRecipesPage.mockRejectedValueOnce(Object.assign(new Error('JWT expired'), { status: 401, code: 'PGRST301' }));
+    await useDiscoverFeedStore.getState().load();
+    expect(useDiscoverFeedStore.getState().errorReference).toBe('discover-401-PGRST301');
+    mockFetchPublicRecipesPage.mockResolvedValueOnce({ recipes: [], nextCursor: null });
+    await useDiscoverFeedStore.getState().load();
+    expect(useDiscoverFeedStore.getState().errorReference).toBeNull();
   });
 
   it('a failed load preserves whatever was already on screen', async () => {

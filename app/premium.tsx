@@ -185,17 +185,38 @@ export default function PremiumScreen() {
                 </Text>
               </View>
             ) : plansUnavailable ? (
-              <View style={[styles.stateBox, { backgroundColor: theme.colors.surfaceAlt }]}>
+              <>
+              {serviceKind === 'unavailable' && (
+                // Billing isn't configured in this build: still show WHAT
+                // Premium offers (the plans), never a price the store hasn't
+                // provided and never a way to "buy" it.
+                <View style={styles.planRow} accessibilityElementsHidden={false}>
+                  {planIds.map((planId) => (
+                    <View
+                      key={planId}
+                      style={[styles.planCard, styles.planCardPreview, { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border }]}
+                      accessibilityLabel={`${t(planLabelKeys[planId])} — ${t('premium.planPriceFromStore')}`}
+                    >
+                      <Text variant="captionStrong">{t(planLabelKeys[planId])}</Text>
+                      <Text variant="label" color="secondary" style={{ marginTop: 4, textAlign: 'center', paddingHorizontal: 6 }}>
+                        {t('premium.planPriceFromStore')}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              <View style={[styles.stateBox, { backgroundColor: theme.colors.surfaceAlt, marginTop: serviceKind === 'unavailable' ? 12 : 0 }]}>
                 <Text variant="bodyStrong" style={{ textAlign: 'center' }}>
                   {t('premium.unavailableTitle')}
                 </Text>
                 <Text variant="caption" color="secondary" style={{ textAlign: 'center' }}>
-                  {t('premium.unavailableMessage')}
+                  {serviceKind === 'unavailable' ? t('premium.billingNotConfiguredMessage') : t('premium.unavailableMessage')}
                 </Text>
                 {serviceKind !== 'unavailable' && (
                   <Button label={t('premium.retryLoadPlans')} variant="secondary" onPress={loadOffers} style={{ marginTop: 8 }} />
                 )}
               </View>
+              </>
             ) : (
               <>
                 <View style={styles.planRow}>
@@ -303,6 +324,7 @@ const styles = StyleSheet.create({
   currentPlanCard: { marginTop: 24, borderRadius: 14, padding: 16, gap: 4 },
   chooseTitle: { marginTop: 28, marginBottom: 12 },
   planRow: { flexDirection: 'row', gap: 10 },
+  planCardPreview: { opacity: 0.75, justifyContent: 'center' },
   planCard: { flex: 1, minHeight: 88, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 14, alignItems: 'center', position: 'relative' },
   saveBadge: { position: 'absolute', top: -9, alignSelf: 'center', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
   priceNote: { marginTop: 12, textAlign: 'center', lineHeight: 17 },
